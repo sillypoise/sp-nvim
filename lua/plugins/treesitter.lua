@@ -16,6 +16,7 @@ return {
       "json",
       "jsonc",
       "kdl",
+      "latex",
       "lua",
       "luadoc",
       "luap",
