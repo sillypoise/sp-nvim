@@ -7,12 +7,12 @@ return {
       "eslint_d",
       "eslint-lsp",
       -- "hclfmt", -- go not found
-      "ltex-ls",
+      -- "ltex-ls",
       "markdownlint-cli2",
       "markdown-toc",
-      "marksman",
-      -- "markdown-oxide",
-      "mdslw",
+      -- "marksman",
+      "markdown-oxide",
+      -- "mdslw",
       -- "nil", -- cargo not found
       "stylua",
       "shfmt",
