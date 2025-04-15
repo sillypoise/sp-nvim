@@ -22,6 +22,7 @@ return {
       },
     },
     formatters_by_ft = {
+      ["json"] = { "jq" },
       ["markdown"] = { "prettierd", "markdownlint-cli2", "markdown-toc" },
       ["markdown.mdx"] = { "prettierd", "markdownlint-cli2", "markdown-toc" },
     },
