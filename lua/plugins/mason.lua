@@ -3,6 +3,7 @@ return {
   opts = {
     ensure_installed = {
       "biome",
+      "emmet-language-server",
       "eslint_d",
       "eslint-lsp",
       -- "hclfmt", -- go not found
