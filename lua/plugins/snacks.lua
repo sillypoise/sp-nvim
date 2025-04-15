@@ -9,11 +9,79 @@ return {
       -- or leave it empty to use the default settings
       -- refer to the configuration section below
       bigfile = { enabled = true },
-      dashboard = { enabled = true },
+      dashboard = {
+        enabled = true,
+        preset = {
+          keys = {
+            { icon = " ", key = "f", desc = "Find File", action = ":lua Snacks.dashboard.pick('files')" },
+            { icon = " ", key = "n", desc = "New File", action = ":ene | startinsert" },
+            { icon = " ", key = "g", desc = "Find Text", action = ":lua Snacks.dashboard.pick('live_grep')" },
+            { icon = " ", key = "r", desc = "Recent Files", action = ":lua Snacks.dashboard.pick('oldfiles')" },
+            {
+              icon = " ",
+              key = "c",
+              desc = "Config",
+              action = ":lua Snacks.dashboard.pick('files', {cwd = vim.fn.stdpath('config')})",
+            },
+            { icon = " ", key = "s", desc = "Restore Session", section = "session" },
+            { icon = "󰒲 ", key = "L", desc = "Lazy", action = ":Lazy", enabled = package.loaded.lazy ~= nil },
+            { icon = " ", key = "<esc>", desc = "Quit", action = ":qa" },
+          },
+
+          -- https://patorjk.com/software/taag/#p=testall&f=Banner&t=sillypoise
+          header = [[ 
+
+
+     _____________/\/\____/\/\____/\/\________________________________________/\/\___________________________
+    ___/\/\/\/\__________/\/\____/\/\____/\/\__/\/\__/\/\/\/\______/\/\/\______________/\/\/\/\____/\/\/\___ 
+   _/\/\/\/\____/\/\____/\/\____/\/\____/\/\__/\/\__/\/\__/\/\__/\/\__/\/\__/\/\____/\/\/\/\____/\/\/\/\/\_  
+  _______/\/\__/\/\____/\/\____/\/\______/\/\/\/\__/\/\/\/\____/\/\__/\/\__/\/\__________/\/\__/\/\_______   
+ _/\/\/\/\____/\/\/\__/\/\/\__/\/\/\________/\/\__/\/\__________/\/\/\____/\/\/\__/\/\/\/\______/\/\/\/\_    
+_____________________________________/\/\/\/\____/\/\___________________________________________________     
+
+
+
+s i l l y p o i s e . i o 
+
+
+          ]],
+        },
+      },
       dim = { enabled = true },
       explorer = {
         enabled = true,
         replace_netrw = true, -- Replace netrw with the snacks explorer
+      },
+      image = {
+        enabled = true,
+        doc = {
+          -- Personally I set this to false, I don't want to render all the
+          -- images in the file, only when I hover over them
+          -- render the image inline in the buffer
+          -- if your env doesn't support unicode placeholders, this will be disabled
+          -- takes precedence over `opts.float` on supported terminals
+          inline = vim.g.neovim_mode == "skitty" and true or false,
+          -- only_render_image_at_cursor = vim.g.neovim_mode == "skitty" and false or true,
+          -- render the image in a floating window
+          -- only used if `opts.inline` is disabled
+          float = true,
+          -- Sets the size of the image
+          -- max_width = 60,
+          -- max_width = vim.g.neovim_mode == "skitty" and 20 or 60,
+          -- max_height = vim.g.neovim_mode == "skitty" and 10 or 30,
+          max_width = vim.g.neovim_mode == "skitty" and 5 or 60,
+          max_height = vim.g.neovim_mode == "skitty" and 2.5 or 30,
+          -- max_height = 30,
+          -- Apparently, all the images that you preview in neovim are converted
+          -- to .png and they're cached, original image remains the same, but
+          -- the preview you see is a png converted version of that image
+          --
+          -- Where are the cached images stored?
+          -- This path is found in the docs
+          -- :lua print(vim.fn.stdpath("cache") .. "/snacks/image")
+          -- For me returns `~/.cache/neobean/snacks/image`
+          -- Go 1 dir above and check `sudo du -sh ./* | sort -hr | head -n 5`
+        },
       },
       indent = { enabled = true },
       input = { enabled = true },
