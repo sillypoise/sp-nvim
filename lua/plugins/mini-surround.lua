@@ -19,14 +19,37 @@ return {
     return vim.list_extend(mappings, keys)
   end,
   opts = {
+    custom_surroundings = {
+      -- Override `[` to have no space padding
+      ["["] = {
+        input = { "%b[]", "^.%s*", ".%s*$" },
+        output = function()
+          return { left = "[", right = "]" }
+        end,
+      },
+      -- Override `(` to have no padding
+      ["("] = {
+        input = { "%b()", "^.%s*", ".%s*$" },
+        output = function()
+          return { left = "(", right = ")" }
+        end,
+      },
+      -- New bold surrounding
+      ["b"] = {
+        input = { "%*%*.-%*%*", "^%*%*", "%*%*$" },
+        output = function()
+          return { left = "**", right = "**" }
+        end,
+      },
+    },
     mappings = {
-      add = "<leader>csa", -- Add surrounding in Normal and Visual modes
-      delete = "<leader>csd", -- Delete surrounding
-      find = "<leader>csf", -- Find surrounding (to the right)
-      find_left = "<leader>csF", -- Find surrounding (to the left)
-      highlight = "<leader>csh", -- Highlight surrounding
-      replace = "<leader>csr", -- Replace surrounding
-      update_n_lines = "<leader>csn", -- Update `n_lines`
+      add = "<leader>cwa", -- Add surrounding in Normal and Visual modes
+      delete = "<leader>cwd", -- Delete surrounding
+      find = "<leader>cwf", -- Find surrounding (to the right)
+      find_left = "<leader>cwF", -- Find surrounding (to the left)
+      highlight = "<leader>cwh", -- Highlight surrounding
+      replace = "<leader>cwr", -- Replace surrounding
+      update_n_lines = "<leader>cwn", -- Update `n_lines`
     },
   },
 }
