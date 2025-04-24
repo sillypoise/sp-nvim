@@ -1,4 +1,5 @@
-if vim.fn.has("mac") == 1 then
+local uname = vim.uv.os_uname()
+if uname.sysname == "Darwin" then
   return {
     "ghostty",
     dir = "/Applications/Ghostty.app/Contents/Resources/vim/vimfiles/",
