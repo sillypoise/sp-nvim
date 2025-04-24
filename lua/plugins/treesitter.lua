@@ -11,6 +11,7 @@ return {
       "hcl",
       "hjson",
       "html",
+      "http",
       "javascript",
       "jsdoc",
       "json",
