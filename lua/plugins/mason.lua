@@ -18,9 +18,10 @@ return {
       "shfmt",
       "tailwindcss-language-server",
       "terraform-ls",
-      "typescript-language-server",
+      -- "typescript-language-server",
       "prettierd",
       "jq",
+      "vtsls",
     },
   },
 }
