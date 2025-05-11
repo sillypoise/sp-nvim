@@ -23,6 +23,10 @@ return {
     },
     formatters_by_ft = {
       ["json"] = { "biome", "jq" },
+      ["javascript"] = { "biome" },
+      ["javascriptreact"] = { "biome" },
+      ["typescript"] = { "biome" },
+      ["typescriptreact"] = { "biome" },
       ["markdown"] = { "prettierd", "markdownlint-cli2", "markdown-toc" },
       ["markdown.mdx"] = { "prettierd", "markdownlint-cli2", "markdown-toc" },
     },
