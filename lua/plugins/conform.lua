@@ -22,6 +22,7 @@ return {
       },
     },
     formatters_by_ft = {
+      ["astro"] = { "astro" },
       ["json"] = { "biome", "jq" },
       ["javascript"] = { "biome" },
       ["javascriptreact"] = { "biome" },
