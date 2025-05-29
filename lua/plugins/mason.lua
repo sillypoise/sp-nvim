@@ -2,8 +2,9 @@ return {
   "williamboman/mason.nvim",
   opts = {
     ensure_installed = {
+      "astro-language-server",
       "biome",
-      "emmet-language-server",
+      -- "emmet-language-server",
       "eslint_d",
       "eslint-lsp",
       -- "hclfmt", -- go not found
@@ -21,6 +22,7 @@ return {
       -- "typescript-language-server",
       "prettierd",
       "jq",
+      "yaml-language-server",
       "vtsls",
     },
   },
