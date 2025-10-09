@@ -7,14 +7,14 @@ return {
       -- "emmet-language-server",
       "eslint_d",
       "eslint-lsp",
-      -- "hclfmt", -- go not found
+      "hclfmt",
       -- "ltex-ls",
       "markdownlint-cli2",
       "markdown-toc",
       -- "marksman",
       "markdown-oxide",
       -- "mdslw",
-      -- "nil", -- cargo not found
+      "nil",
       "stylua",
       "shfmt",
       "tailwindcss-language-server",
