@@ -16,6 +16,8 @@ return {
       -- "mdslw",
       "nil",
       "stylua",
+      "tinymist",
+      "typstyle",
       "shfmt",
       "tailwindcss-language-server",
       "terraform-ls",

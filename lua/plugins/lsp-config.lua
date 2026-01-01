@@ -1,12 +1,28 @@
 return {
   "neovim/nvim-lspconfig",
   opts = {
-    servers = {},
-    -- -- Enable this to enable the builtin LSP code lenses on Neovim >= 0.10.0
-    -- -- Be aware that you also will need to properly configure your LSP server to
-    -- -- provide the code lenses.
-    -- codelens = {
-    --   enabled = false,
-    -- },
+    servers = {
+      tinymist = {
+        keys = {
+          {
+            "<leader>cP",
+            function()
+              local buf_name = vim.api.nvim_buf_get_name(0)
+              local file_name = vim.fn.fnamemodify(buf_name, ":t")
+              LazyVim.lsp.execute({
+                command = "tinymist.pinMain",
+                arguments = { buf_name },
+              })
+              LazyVim.info("Tinymist: Pinned " .. file_name)
+            end,
+            desc = "Pin main file",
+          },
+        },
+        single_file_support = true,
+        settings = {
+          formatterMode = "typstyle",
+        },
+      },
+    },
   },
 }
