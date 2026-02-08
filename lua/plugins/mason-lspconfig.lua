@@ -1,4 +1,10 @@
 return {
   "mason-org/mason-lspconfig.nvim",
-  config = function() end,
+  opts = {
+    ensure_installed = {
+      "oxlint",
+      "tsgo",
+      -- "vtsls",
+    },
+  },
 }

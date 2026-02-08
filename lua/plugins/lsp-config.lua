@@ -2,6 +2,9 @@ return {
   "neovim/nvim-lspconfig",
   opts = {
     servers = {
+      oxlint = {},
+      tsgo = {},
+      vtsls = { enabled = false },
       tinymist = {
         keys = {
           {
