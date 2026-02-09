@@ -30,7 +30,7 @@ vim.g.root_spec = { "lsp", { ".git", "lua" }, "cwd" }
 
 -- Set LSP servers to be ignored when used with `util.root.detectors.lsp`
 -- for detecting the LSP root
-vim.g.root_lsp_ignore = { "copilot" }
+vim.g.root_lsp_ignore = {}
 
 -- Show the current document symbols location from Trouble in lualine
 -- You can disable this for a buffer by setting `vim.b.trouble_lualine = false`

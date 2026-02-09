@@ -20,7 +20,6 @@ require("lazy").setup({
     { "LazyVim/LazyVim", import = "lazyvim.plugins" },
     -- add LazyExtras plugins
     -- { import = "lazyvim.plugins.extras.ai.codeium" },
-    { import = "lazyvim.plugins.extras.ai.copilot" },
     { import = "lazyvim.plugins.extras.coding.blink" },
     { import = "lazyvim.plugins.extras.coding.luasnip" },
     { import = "lazyvim.plugins.extras.editor.snacks_explorer" },

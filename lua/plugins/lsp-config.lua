@@ -2,8 +2,12 @@ return {
   "neovim/nvim-lspconfig",
   opts = {
     servers = {
-      oxlint = {},
-      tsgo = {},
+      oxlint = {
+        cmd = { vim.fn.stdpath("data") .. "/mason/bin/oxlint", "--lsp" },
+      },
+      tsgo = {
+        cmd = { vim.fn.stdpath("data") .. "/mason/bin/tsgo", "--lsp", "--stdio" },
+      },
       vtsls = { enabled = false },
       tinymist = {
         keys = {
