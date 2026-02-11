@@ -27,3 +27,8 @@ end
 
 -- Map the keybinding to copy the file path to clipboard
 vim.keymap.set("n", "<leader>yf", copy_file_path, { desc = "Copy file path to clipboard using OSC52" })
+
+-- Open preview bridge target for current markdown buffer.
+vim.keymap.set("n", "<leader>cp", function()
+  require("preview_bridge").open_current_buffer()
+end, { desc = "Open Markdown Preview" })

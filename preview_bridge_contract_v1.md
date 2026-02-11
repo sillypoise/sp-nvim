@@ -37,6 +37,14 @@ This document defines the integration contract between the Neovim bridge plugin 
 - WebSocket channel is available for browser realtime updates and future plugin transport migration.
 - Current rollout supports full websocket write actions (`upsert`, `close`) while HTTP remains compatible.
 
+### Recommended Plugin Profile (Current)
+
+- `transport = "ws"`
+- `ws_write_enabled = true`
+- `ws_write_http_fallback = true`
+- `ws_subscribe_enabled = false` (browser preview client remains subscription owner)
+- Open command should call `POST /api/preview/open` and use fallback URL when `routed: false`.
+
 ## API Contract
 
 ### Upsert Live Buffer
@@ -107,11 +115,46 @@ This document defines the integration contract between the Neovim bridge plugin 
 - `GET /api/preview/state?file=content/markdown.md`
 - `DELETE /api/preview/live` (clears all live buffers, returns `204`)
 
+### Open/Navigate Preview
+
+- `POST /api/preview/open`
+- Body:
+
+```json
+{
+  "filePath": "content/markdown.md"
+}
+```
+
+- Success response when existing browser preview client is connected (`200`):
+
+```json
+{
+  "ok": true,
+  "result": {
+    "routed": true
+  }
+}
+```
+
+- Success response when no browser preview client is connected (`200`):
+
+```json
+{
+  "ok": true,
+  "result": {
+    "routed": false,
+    "urlPath": "/preview?file=content%2Fmarkdown.md"
+  }
+}
+```
+
 ### WebSocket Endpoint
 
 - `ws://localhost:3000/preview-bridge` (or `wss` on HTTPS)
 - Client -> server messages:
   - `{ "type": "hello" }`
+  - `{ "type": "hello", "client": "browser" }`
   - `{ "type": "subscribe", "filePath": "content/markdown.md" }`
   - `{ "type": "unsubscribe", "filePath": "content/markdown.md" }`
   - `{ "type": "ping" }`
@@ -120,6 +163,7 @@ This document defines the integration contract between the Neovim bridge plugin 
 - Server -> client messages:
   - `{ "type": "ack", "event": "hello|subscribe|unsubscribe|upsert|close", ... }`
   - `{ "type": "preview:state", ... }`
+  - `{ "type": "preview:navigate", "filePath": "content/markdown.md", "urlPath": "/preview?file=content%2Fmarkdown.md" }`
   - `{ "type": "preview:error", "code": "...", "message": "..." }`
   - `{ "type": "pong" }`
 
@@ -130,6 +174,7 @@ WebSocket notes:
 - Browser currently owns preview subscriptions in this app; plugin subscriptions are optional.
 - `upsert` broadcasts `preview:state` only when `applied: true`.
 - `close` always emits an ack and then attempts a `preview:state` publish for subscribers.
+- `preview:navigate` is emitted to websocket peers identified as browser clients.
 
 ### Shared Envelope and Error Codes
 

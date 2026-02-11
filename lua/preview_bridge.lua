@@ -1,4 +1,5 @@
 local logic = require("preview_bridge.logic")
+local osc52_ok, osc52 = pcall(require, "osc52")
 
 local preview_bridge = {}
 
@@ -7,9 +8,12 @@ local default_config = {
   transport = "http",
   server_url = "http://localhost:3000",
   ws_url = nil,
-  ws_subscribe_enabled = true,
+  ws_subscribe_enabled = false,
   ws_write_enabled = true,
   ws_write_http_fallback = true,
+  browser_base_url = "http://localhost:3000",
+  open_fallback_mode = "notify_copy",
+  open_custom_command = nil,
   ws_ping_interval_ms = 15000,
   ws_backoff_initial_ms = 250,
   ws_backoff_max_ms = 2000,
@@ -61,6 +65,9 @@ local state = {
     last_ws_ack_removed = nil,
     last_ws_message = nil,
     ws_state = "disconnected",
+    last_open_result = nil,
+    last_open_url = nil,
+    last_open_error = nil,
     last_upsert = nil,
     last_close = nil,
   },
@@ -165,6 +172,45 @@ local function create_live_url()
   return state.config.server_url .. "/api/preview/live"
 end
 
+local function create_open_url()
+  return state.config.server_url .. "/api/preview/open"
+end
+
+local function browser_base_url()
+  local configured_base_url = state.config.browser_base_url
+  if type(configured_base_url) ~= "string" then
+    return state.config.server_url
+  end
+
+  local trimmed_base_url = configured_base_url:gsub("/+$", "")
+  if trimmed_base_url == "" then
+    return state.config.server_url
+  end
+
+  return trimmed_base_url
+end
+
+local function build_preview_url_for_file(file_path)
+  local escaped_file_path = vim.uri_encode(file_path)
+  return browser_base_url() .. "/preview?file=" .. escaped_file_path
+end
+
+local function build_preview_url_from_path(url_path)
+  if type(url_path) ~= "string" then
+    return nil
+  end
+
+  if url_path:sub(1, 7) == "http://" or url_path:sub(1, 8) == "https://" then
+    return url_path
+  end
+
+  if url_path:sub(1, 1) ~= "/" then
+    url_path = "/" .. url_path
+  end
+
+  return browser_base_url() .. url_path
+end
+
 local function ensure_curl_available()
   if state.curl_available ~= nil then
     return state.curl_available
@@ -191,6 +237,83 @@ local function ensure_websocat_available()
   end
 
   return state.websocat_available
+end
+
+local function copy_to_clipboard(value)
+  local copy_method = "register"
+
+  if osc52_ok == true then
+    local copied_ok = pcall(osc52.copy, value)
+    if copied_ok == true then
+      return "osc52"
+    end
+  end
+
+  pcall(vim.fn.setreg, '"', value)
+  return copy_method
+end
+
+local function notify_open_fallback(url, reason)
+  vim.schedule(function()
+    local copy_method = copy_to_clipboard(url)
+    local message = "PreviewBridge: " .. reason .. " URL copied to clipboard (" .. copy_method .. "): " .. url
+    vim.notify(message, vim.log.levels.INFO)
+    state.debug.last_open_result = "notify_copy"
+    state.debug.last_open_url = url
+  end)
+end
+
+local function open_url(url, reason)
+  local fallback_mode = state.config.open_fallback_mode
+  if fallback_mode == "system_open" then
+    local opened = false
+
+    if vim.ui and vim.ui.open then
+      local open_ok = pcall(vim.ui.open, url)
+      if open_ok == true then
+        opened = true
+      end
+    end
+
+    if opened ~= true then
+      local open_command = nil
+      if vim.fn.has("mac") == 1 then
+        open_command = { "open", url }
+      elseif vim.fn.has("win32") == 1 then
+        open_command = { "cmd.exe", "/c", "start", "", url }
+      else
+        open_command = { "xdg-open", url }
+      end
+
+      local started_ok = pcall(vim.system, open_command, { text = true }, function(_) end)
+      opened = started_ok
+    end
+
+    if opened == true then
+      state.debug.last_open_result = "system_open"
+      state.debug.last_open_url = url
+      return
+    end
+
+    notify_open_fallback(url, "failed to open browser from remote environment")
+    return
+  end
+
+  if fallback_mode == "custom_command" and type(state.config.open_custom_command) == "string" then
+    local shell_url = vim.fn.shellescape(url)
+    local command = string.gsub(state.config.open_custom_command, "%%URL%%", shell_url)
+    local started_ok = pcall(vim.system, { "sh", "-lc", command }, { text = true }, function(_) end)
+    if started_ok == true then
+      state.debug.last_open_result = "custom_command"
+      state.debug.last_open_url = url
+      return
+    end
+
+    notify_open_fallback(url, "failed to run open_custom_command")
+    return
+  end
+
+  notify_open_fallback(url, reason)
 end
 
 local function ws_url()
@@ -282,6 +405,98 @@ local function post_live_payload_async(payload)
   return true
 end
 
+local function request_open_in_browser(file_path)
+  local fallback_url = build_preview_url_for_file(file_path)
+
+  if ensure_curl_available() ~= true then
+    state.debug.last_open_error = "curl_missing"
+    open_url(fallback_url, "cannot call /api/preview/open")
+    return false
+  end
+
+  local payload_json = vim.json.encode({ filePath = file_path })
+  local command = {
+    "curl",
+    "--silent",
+    "--show-error",
+    "--max-time",
+    "2",
+    "--request",
+    "POST",
+    "--header",
+    "Content-Type: application/json",
+    "--data-binary",
+    payload_json,
+    "--output",
+    "-",
+    "--write-out",
+    "\n%{http_code}",
+    create_open_url(),
+  }
+
+  local started_ok, started_error = pcall(vim.system, command, { text = true }, function(result)
+    if result.code ~= 0 then
+      state.debug.last_open_error = tostring(result.stderr)
+      open_url(fallback_url, "preview app unavailable for open route")
+      return
+    end
+
+    local status_code, response_body = logic.parse_curl_response(result.stdout)
+    if status_code >= 400 then
+      local error_detail = "open_http_" .. tostring(status_code)
+      local decode_ok, decoded_body = pcall(vim.json.decode, response_body)
+      if decode_ok == true and type(decoded_body) == "table" then
+        if type(decoded_body.error) == "table" then
+          local error_code = tostring(decoded_body.error.code)
+          local error_message = tostring(decoded_body.error.message)
+          error_detail = error_code .. ":" .. error_message
+        end
+      end
+      state.debug.last_open_error = error_detail
+      warn_throttled("open_route_rejected", "PreviewBridge: open route rejected - " .. error_detail .. ".")
+      open_url(fallback_url, "preview app rejected open route")
+      return
+    end
+
+    local decode_ok, decoded_body = pcall(vim.json.decode, response_body)
+    if decode_ok ~= true then
+      state.debug.last_open_error = "open_decode_failed"
+      open_url(fallback_url, "preview open response invalid")
+      return
+    end
+
+    local result_body = decoded_body.result
+    if type(result_body) ~= "table" then
+      state.debug.last_open_error = "open_missing_result"
+      open_url(fallback_url, "preview open response missing result")
+      return
+    end
+
+    if result_body.routed == true then
+      state.debug.last_open_result = "routed"
+      state.debug.last_open_url = nil
+      state.debug.last_open_error = nil
+      vim.notify("PreviewBridge: routed open request to active preview tab.", vim.log.levels.INFO)
+      return
+    end
+
+    local routed_url = build_preview_url_from_path(result_body.urlPath)
+    if routed_url == nil then
+      routed_url = fallback_url
+    end
+    state.debug.last_open_error = nil
+    open_url(routed_url, "no active preview browser session")
+  end)
+
+  if started_ok ~= true then
+    state.debug.last_open_error = tostring(started_error)
+    open_url(fallback_url, "failed to invoke /api/preview/open")
+    return false
+  end
+
+  return true
+end
+
 local function ws_close_pipe(pipe)
   if pipe == nil then
     return
@@ -316,6 +531,7 @@ local function ws_send_hello()
     type = "hello",
     contract = "v1",
     sessionId = state.session_id,
+    client = "editor",
   })
 end
 
@@ -766,11 +982,6 @@ local function send_upsert(buffer_number)
     return false
   end
 
-  if ensure_curl_available() ~= true then
-    state.debug.last_skip_reason = "curl_unavailable"
-    return false
-  end
-
   local version = (state.file_versions[relative_path] or 0) + 1
   local upsert_sent = false
 
@@ -988,6 +1199,9 @@ local function debug_lines()
     "last_ws_ack_version=" .. tostring(state.debug.last_ws_ack_version),
     "last_ws_ack_removed=" .. tostring(state.debug.last_ws_ack_removed),
     "last_ws_message=" .. tostring(state.debug.last_ws_message),
+    "last_open_result=" .. tostring(state.debug.last_open_result),
+    "last_open_url=" .. tostring(state.debug.last_open_url),
+    "last_open_error=" .. tostring(state.debug.last_open_error),
     "ws_reconnect_attempts=" .. tostring(state.ws.reconnect_attempt_count),
     "last_pong_age_ms=" .. tostring(pong_age_ms),
     "last_warning=" .. tostring(state.debug.last_warning),
@@ -1045,6 +1259,10 @@ local function setup_commands()
     send_upsert(buffer_number)
   end, { desc = "Push current markdown buffer to live preview" })
 
+  vim.api.nvim_create_user_command("PreviewBridgeOpen", function()
+    preview_bridge.open_current_buffer()
+  end, { desc = "Open current markdown file in preview browser" })
+
   vim.api.nvim_create_user_command("PreviewBridgeClose", function()
     local buffer_number = vim.api.nvim_get_current_buf()
     send_close(buffer_number)
@@ -1082,6 +1300,12 @@ function preview_bridge.setup(user_config)
   if merged_config.transport ~= "ws" then
     merged_config.transport = "http"
   end
+  if merged_config.open_fallback_mode ~= "system_open" and merged_config.open_fallback_mode ~= "custom_command" then
+    merged_config.open_fallback_mode = "notify_copy"
+  end
+  if type(merged_config.browser_base_url) == "string" then
+    merged_config.browser_base_url = merged_config.browser_base_url:gsub("/+$", "")
+  end
 
   state.config = merged_config
   state.enabled = merged_config.enabled == true
@@ -1116,6 +1340,19 @@ end
 
 function preview_bridge.push_current_buffer()
   return send_upsert(vim.api.nvim_get_current_buf())
+end
+
+function preview_bridge.open_current_buffer()
+  local buffer_number = vim.api.nvim_get_current_buf()
+  local is_eligible, relative_path = is_eligible_buffer(buffer_number)
+  if is_eligible ~= true then
+    state.debug.last_open_error = "open_path_ineligible"
+    vim.notify("PreviewBridge: current buffer is not an eligible content/*.md file.", vim.log.levels.WARN)
+    return false
+  end
+
+  ws_set_active_file(relative_path)
+  return request_open_in_browser(relative_path)
 end
 
 function preview_bridge.close_current_buffer()
