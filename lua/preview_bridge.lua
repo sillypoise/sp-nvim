@@ -14,6 +14,7 @@ local default_config = {
   browser_base_url = "http://localhost:3000",
   open_fallback_mode = "notify_copy",
   open_custom_command = nil,
+  max_payload_bytes = 1000000,
   ws_ping_interval_ms = 15000,
   ws_backoff_initial_ms = 250,
   ws_backoff_max_ms = 2000,
@@ -68,6 +69,10 @@ local state = {
     last_open_result = nil,
     last_open_url = nil,
     last_open_error = nil,
+    ws_writes_sent = 0,
+    ws_write_failures = 0,
+    http_fallback_writes = 0,
+    payload_too_large_skips = 0,
     last_upsert = nil,
     last_close = nil,
   },
@@ -344,6 +349,47 @@ local function ws_write_enabled()
   return state.config.ws_write_enabled ~= false
 end
 
+local function payload_size_bytes(payload)
+  local encode_ok, payload_json = pcall(vim.json.encode, payload)
+  if encode_ok ~= true then
+    return nil
+  end
+
+  return #payload_json
+end
+
+local function payload_within_limit(payload)
+  local size_bytes = payload_size_bytes(payload)
+  if size_bytes == nil then
+    return false, nil
+  end
+
+  if size_bytes > state.config.max_payload_bytes then
+    return false, size_bytes
+  end
+
+  return true, size_bytes
+end
+
+local function normalize_open_http_error(status_code, response_body)
+  local normalized_error = "open_http_" .. tostring(status_code)
+  local decode_ok, decoded_body = pcall(vim.json.decode, response_body)
+  if decode_ok ~= true or type(decoded_body) ~= "table" then
+    return normalized_error
+  end
+
+  if type(decoded_body.error) ~= "table" then
+    return normalized_error
+  end
+
+  local error_code = tostring(decoded_body.error.code)
+  if error_code == "PAYLOAD_TOO_LARGE" then
+    return "open_payload_too_large"
+  end
+
+  return "open_http_" .. tostring(status_code) .. "_" .. error_code
+end
+
 local function post_live_payload_async(payload)
   if ensure_curl_available() ~= true then
     state.debug.last_transport_error = "curl_missing"
@@ -443,15 +489,7 @@ local function request_open_in_browser(file_path)
 
     local status_code, response_body = logic.parse_curl_response(result.stdout)
     if status_code >= 400 then
-      local error_detail = "open_http_" .. tostring(status_code)
-      local decode_ok, decoded_body = pcall(vim.json.decode, response_body)
-      if decode_ok == true and type(decoded_body) == "table" then
-        if type(decoded_body.error) == "table" then
-          local error_code = tostring(decoded_body.error.code)
-          local error_message = tostring(decoded_body.error.message)
-          error_detail = error_code .. ":" .. error_message
-        end
-      end
+      local error_detail = normalize_open_http_error(status_code, response_body)
       state.debug.last_open_error = error_detail
       warn_throttled("open_route_rejected", "PreviewBridge: open route rejected - " .. error_detail .. ".")
       open_url(fallback_url, "preview app rejected open route")
@@ -462,6 +500,12 @@ local function request_open_in_browser(file_path)
     if decode_ok ~= true then
       state.debug.last_open_error = "open_decode_failed"
       open_url(fallback_url, "preview open response invalid")
+      return
+    end
+
+    if decoded_body.ok ~= true then
+      state.debug.last_open_error = "open_invalid_envelope"
+      open_url(fallback_url, "preview open response not ok")
       return
     end
 
@@ -482,9 +526,11 @@ local function request_open_in_browser(file_path)
 
     local routed_url = build_preview_url_from_path(result_body.urlPath)
     if routed_url == nil then
+      state.debug.last_open_error = "open_missing_url_path"
       routed_url = fallback_url
+    else
+      state.debug.last_open_error = nil
     end
-    state.debug.last_open_error = nil
     open_url(routed_url, "no active preview browser session")
   end)
 
@@ -703,6 +749,15 @@ local function ws_handle_server_message(decoded_message)
     local code = tostring(decoded_message.code)
     local message = tostring(decoded_message.message)
     state.debug.last_ws_error = code .. ":" .. message
+
+    if code == "PAYLOAD_TOO_LARGE" then
+      warn_throttled(
+        "ws_payload_too_large",
+        "PreviewBridge: WS payload too large; content was not applied by server."
+      )
+      return
+    end
+
     warn_throttled("ws_preview_error", "PreviewBridge: WS error " .. code .. " - " .. message .. ".")
   end
 end
@@ -983,10 +1038,35 @@ local function send_upsert(buffer_number)
   end
 
   local version = (state.file_versions[relative_path] or 0) + 1
+  local payload = logic.build_upsert_payload(state.session_id, relative_path, version, content)
+  local payload_ok, payload_size = payload_within_limit(payload)
+
+  if payload_ok ~= true then
+    state.debug.payload_too_large_skips = state.debug.payload_too_large_skips + 1
+    state.debug.last_skip_reason = "payload_too_large_local"
+    warn_throttled(
+      "payload_too_large_local",
+      "PreviewBridge: payload exceeds max_payload_bytes ("
+        .. tostring(payload_size)
+        .. " > "
+        .. tostring(state.config.max_payload_bytes)
+        .. ")."
+    )
+    return false
+  end
+
+  local attempted_ws_write = false
   local upsert_sent = false
 
   if ws_write_enabled() == true then
+    attempted_ws_write = true
     upsert_sent = ws_send_upsert(state.session_id, relative_path, version, content)
+    if upsert_sent == true then
+      state.debug.ws_writes_sent = state.debug.ws_writes_sent + 1
+    else
+      state.debug.ws_write_failures = state.debug.ws_write_failures + 1
+    end
+
     if upsert_sent ~= true and state.config.ws_write_http_fallback ~= true then
       state.debug.last_skip_reason = "ws_write_not_started"
       return false
@@ -994,11 +1074,14 @@ local function send_upsert(buffer_number)
   end
 
   if upsert_sent ~= true then
-    local payload = logic.build_upsert_payload(state.session_id, relative_path, version, content)
     upsert_sent = post_live_payload_async(payload)
     if upsert_sent ~= true then
       state.debug.last_skip_reason = "request_not_started"
       return false
+    end
+
+    if attempted_ws_write == true then
+      state.debug.http_fallback_writes = state.debug.http_fallback_writes + 1
     end
   end
 
@@ -1042,10 +1125,18 @@ local function send_close(buffer_number)
   end
 
   local payload = logic.build_close_payload(state.session_id, relative_path)
+  local attempted_ws_write = false
   local started = false
 
   if ws_write_enabled() == true then
+    attempted_ws_write = true
     started = ws_send_close(state.session_id, relative_path)
+    if started == true then
+      state.debug.ws_writes_sent = state.debug.ws_writes_sent + 1
+    else
+      state.debug.ws_write_failures = state.debug.ws_write_failures + 1
+    end
+
     if started ~= true and state.config.ws_write_http_fallback ~= true then
       state.debug.last_skip_reason = "ws_close_not_started"
     end
@@ -1053,6 +1144,9 @@ local function send_close(buffer_number)
 
   if started ~= true then
     started = post_live_payload_async(payload)
+    if started == true and attempted_ws_write == true then
+      state.debug.http_fallback_writes = state.debug.http_fallback_writes + 1
+    end
   end
 
   if started == true then
@@ -1165,7 +1259,11 @@ local function status_lines()
     "ws_subscribe_enabled=" .. tostring(ws_subscription_enabled()),
     "ws_write_enabled=" .. tostring(ws_write_enabled()),
     "ws_write_http_fallback=" .. tostring(state.config.ws_write_http_fallback),
+    "max_payload_bytes=" .. tostring(state.config.max_payload_bytes),
     "ws_active_file=" .. tostring(state.ws.active_file_path),
+    "ws_writes_sent=" .. tostring(state.debug.ws_writes_sent),
+    "http_fallback_writes=" .. tostring(state.debug.http_fallback_writes),
+    "payload_too_large_skips=" .. tostring(state.debug.payload_too_large_skips),
     "tracked_buffers=" .. tostring(tracked_buffer_count()),
   }
 
@@ -1202,6 +1300,7 @@ local function debug_lines()
     "last_open_result=" .. tostring(state.debug.last_open_result),
     "last_open_url=" .. tostring(state.debug.last_open_url),
     "last_open_error=" .. tostring(state.debug.last_open_error),
+    "ws_write_failures=" .. tostring(state.debug.ws_write_failures),
     "ws_reconnect_attempts=" .. tostring(state.ws.reconnect_attempt_count),
     "last_pong_age_ms=" .. tostring(pong_age_ms),
     "last_warning=" .. tostring(state.debug.last_warning),
@@ -1300,6 +1399,10 @@ function preview_bridge.setup(user_config)
   if merged_config.transport ~= "ws" then
     merged_config.transport = "http"
   end
+  if type(merged_config.max_payload_bytes) ~= "number" or merged_config.max_payload_bytes < 1 then
+    merged_config.max_payload_bytes = default_config.max_payload_bytes
+  end
+  merged_config.max_payload_bytes = math.floor(merged_config.max_payload_bytes)
   if merged_config.open_fallback_mode ~= "system_open" and merged_config.open_fallback_mode ~= "custom_command" then
     merged_config.open_fallback_mode = "notify_copy"
   end
@@ -1376,6 +1479,8 @@ preview_bridge._test = {
   ws_url = ws_url,
   ws_subscription_enabled = ws_subscription_enabled,
   ws_write_enabled = ws_write_enabled,
+  payload_within_limit = payload_within_limit,
+  normalize_open_http_error = normalize_open_http_error,
 }
 
 return preview_bridge

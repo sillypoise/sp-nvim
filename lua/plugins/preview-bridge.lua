@@ -15,6 +15,7 @@ return {
       browser_base_url = "http://localhost:3000",
       open_fallback_mode = "notify_copy",
       open_custom_command = nil,
+      max_payload_bytes = 1000000,
       ws_ping_interval_ms = 15000,
       ws_backoff_initial_ms = 250,
       ws_backoff_max_ms = 2000,

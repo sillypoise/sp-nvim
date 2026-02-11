@@ -48,6 +48,7 @@ Contract source of truth in this repo: `preview_bridge_contract_v1.md`.
 - Set `ws_write_enabled = false` to force HTTP writes even in WS transport mode.
 - Set `ws_write_http_fallback = false` to disable HTTP fallback for failed WS writes.
 - `:PreviewBridgeOpen` uses `POST /api/preview/open` and defaults to remote-safe `notify_copy` fallback.
+- Local payload guard mirrors server limits via `max_payload_bytes` (default `1000000`).
 
 ### Contract mapping
 
@@ -61,6 +62,10 @@ Contract source of truth in this repo: `preview_bridge_contract_v1.md`.
 - `open_fallback_mode` maps to fallback strategy (`notify_copy`, `system_open`, `custom_command`).
 - `open_custom_command` maps to shell command used when `open_fallback_mode = "custom_command"` and
   should include `%URL%` placeholder.
+- `max_payload_bytes` maps to client-side payload guard before WS/HTTP write dispatch.
 - `debounce_ms` maps to typing update cadence for `TextChanged` and `TextChangedI` upserts.
 - `file_filter` and path normalization map to canonical `content/**/*.md` identity invariants.
 - `workspace_root` maps to workspace-relative path resolution before `filePath` emission.
+
+`PreviewBridgeStatus` and `PreviewBridgeDebug` include write counters (`ws_writes_sent`,
+`http_fallback_writes`, `ws_write_failures`, `payload_too_large_skips`) for integration triage.

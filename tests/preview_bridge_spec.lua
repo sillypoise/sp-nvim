@@ -243,4 +243,32 @@ describe("preview bridge websocket helpers", function()
     assert.is_false(preview_bridge._test.ws_write_enabled())
     preview_bridge._state.config = previous_config
   end)
+
+  -- This test verifies local payload guard mirrors server payload limits.
+  it("rejects oversized payloads locally", function()
+    local previous_config = preview_bridge._state.config
+    preview_bridge._state.config = { max_payload_bytes = 10 }
+
+    local payload_ok, payload_size = preview_bridge._test.payload_within_limit({
+      action = "upsert",
+      sessionId = "nvim-1",
+      filePath = "content/notes.md",
+      version = 1,
+      content = "hello world",
+    })
+
+    preview_bridge._state.config = previous_config
+    assert.is_false(payload_ok)
+    assert.is_true(payload_size > 10)
+  end)
+
+  -- This test verifies open-route error normalization for 413 payload limit responses.
+  it("normalizes open route payload limit errors", function()
+    local normalized_error = preview_bridge._test.normalize_open_http_error(
+      413,
+      [[{"ok":false,"error":{"code":"PAYLOAD_TOO_LARGE","message":"too large"}}]]
+    )
+
+    assert.equals("open_payload_too_large", normalized_error)
+  end)
 end)
