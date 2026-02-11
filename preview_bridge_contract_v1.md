@@ -31,11 +31,11 @@ This document defines the integration contract between the Neovim bridge plugin 
 
 ## Transport and Reliability
 
-- v1 transport is HTTP via async requests from plugin.
+- v1 transport supports HTTP and WebSocket.
 - Bridge failures are non-fatal in editor; plugin retries naturally on subsequent edits.
 - No guaranteed queue/backoff persistence in v1.
 - WebSocket channel is available for browser realtime updates and future plugin transport migration.
-- Current rollout is hybrid: HTTP remains the write path of record; websocket is used for push/state subscription.
+- Current rollout supports full websocket write actions (`upsert`, `close`) while HTTP remains compatible.
 
 ## API Contract
 
@@ -96,11 +96,16 @@ This document defines the integration contract between the Neovim bridge plugin 
 }
 ```
 
+- `removed` is boolean:
+  - `true` when a matching `(sessionId, filePath)` live entry existed and was removed.
+  - `false` when no matching live entry existed (idempotent close behavior).
+
 ### Debug Endpoints
 
 - `GET /api/preview/live`
 - `GET /api/preview/live?file=content/markdown.md`
 - `GET /api/preview/state?file=content/markdown.md`
+- `DELETE /api/preview/live` (clears all live buffers, returns `204`)
 
 ### WebSocket Endpoint
 
@@ -110,8 +115,10 @@ This document defines the integration contract between the Neovim bridge plugin 
   - `{ "type": "subscribe", "filePath": "content/markdown.md" }`
   - `{ "type": "unsubscribe", "filePath": "content/markdown.md" }`
   - `{ "type": "ping" }`
+  - `{ "type": "upsert", "sessionId": "nvim-...", "filePath": "content/markdown.md", "version": 12, "content": "# Draft" }`
+  - `{ "type": "close", "sessionId": "nvim-...", "filePath": "content/markdown.md" }`
 - Server -> client messages:
-  - `{ "type": "ack", "event": "hello|subscribe|unsubscribe", ... }`
+  - `{ "type": "ack", "event": "hello|subscribe|unsubscribe|upsert|close", ... }`
   - `{ "type": "preview:state", ... }`
   - `{ "type": "preview:error", "code": "...", "message": "..." }`
   - `{ "type": "pong" }`
@@ -120,7 +127,9 @@ WebSocket notes:
 
 - Extra fields in client payloads are ignored in current implementation.
 - Subscription operations are idempotent for normal repeated calls.
-- Browser currently owns preview subscriptions; plugin websocket usage is optional while HTTP writes remain active.
+- Browser currently owns preview subscriptions in this app; plugin subscriptions are optional.
+- `upsert` broadcasts `preview:state` only when `applied: true`.
+- `close` always emits an ack and then attempts a `preview:state` publish for subscribers.
 
 ### Shared Envelope and Error Codes
 
@@ -138,13 +147,17 @@ WebSocket notes:
 ### Current WebSocket `preview:error` codes
 
 - `INVALID_PAYLOAD`
+- `INVALID_PATH`
+- `PAYLOAD_TOO_LARGE`
 - `INVALID_STATE`
 - `SUBSCRIPTION_LIMIT`
 - `STATE_RESOLVE_FAILED`
+- `UNSUPPORTED_CONTRACT`
 
 ## Server-Side Limits and Lifecycle
 
-- Max upsert request payload size: `1_000_000` bytes.
+- Max HTTP live payload size (`POST /api/preview/live`): `1_000_000` bytes.
+- Max websocket message size (`/preview-bridge`): `1_000_000` bytes.
 - Live entries are TTL-pruned:
   - `LIVE_BUFFER_TTL_MS = 15 * 60 * 1000`
 - Preview state source priority is fixed:
@@ -162,17 +175,17 @@ WebSocket notes:
 ## Compatibility Policy
 
 - This contract is the source of truth for v1 behavior.
-- Any breaking field/behavior change requires a version bump (for example `v2`).
+- Any breaking field/behavior change requires a version bump (e.g. `v2`).
 - Additive changes are allowed if existing fields and semantics remain stable.
 
 ## v1.1 (Planned)
 
 The following are planned non-breaking clarifications for plugin websocket transport rollout:
 
-- `hello` may include contract and session metadata:
+- `hello` may include contract and session metadata (already accepted in server parser):
   - `{ "type": "hello", "contract": "v1.1", "sessionId": "nvim-..." }`
-- `ack` may echo websocket contract version:
-  - `{ "type": "ack", "event": "hello", "contract": "v1.1" }`
+- `ack` includes websocket contract version in current implementation:
+  - `{ "type": "ack", "event": "hello", "contract": "v1" }`
 - Recommended reconnect bounds for plugin WS mode:
   - backoff start `250ms`, cap `2000ms`, jitter enabled.
 - Heartbeat remains optional in v1.1:
