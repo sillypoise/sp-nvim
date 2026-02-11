@@ -8,6 +8,8 @@ Refer to the [documentation](https://lazyvim.github.io/installation) to get star
 This config includes a local Neovim bridge that streams unsaved Markdown buffer content to a preview
 server.
 
+Contract source of truth in this repo: `preview_bridge_contract_v1.md`.
+
 - Loader spec: `lua/plugins/preview-bridge.lua`
 - Runtime module: `lua/preview_bridge.lua`
 - Logic helpers: `lua/preview_bridge/logic.lua`
@@ -16,6 +18,8 @@ server.
 
 - `:PreviewBridgeStatus` shows enabled state, session id, workspace root, and tracked buffers.
 - `:PreviewBridgeDebug` shows last skip reason, transport status, warning, and last payload details.
+- `:PreviewBridgeReconnect` forces websocket reconnect (WS transport mode).
+- `:PreviewBridgeResubscribe` forces websocket resubscribe (when enabled).
 - `:PreviewBridgePush` forces an immediate upsert for the current buffer.
 - `:PreviewBridgeClose` forces a close action for the current buffer.
 - `:PreviewBridgeEnable` enables the bridge.
@@ -30,3 +34,22 @@ server.
   `server_url`.
 - For monorepos or unusual workspace layouts, set `workspace_root` in
   `lua/plugins/preview-bridge.lua`.
+
+### WebSocket transport (v1)
+
+- Set `transport = "ws"` to enable websocket connection awareness.
+- HTTP remains the write path for `upsert` and `close` in v1 hybrid mode.
+- `websocat` must be installed and available on `PATH` for WS mode.
+- Browser owns preview subscriptions by default; plugin WS subscription signaling is optional.
+- Plugin WS subscription signaling is enabled by default in WS mode.
+- Set `ws_subscribe_enabled = false` to disable plugin subscribe/unsubscribe signaling.
+
+### Contract mapping
+
+- `transport` maps to contract transport mode (`http` canonical writes, `ws` hybrid lifecycle).
+- `server_url` maps to HTTP endpoints under `/api/preview/live`, `/api/preview/state`, and `/api/preview/live`.
+- `ws_url` maps to websocket endpoint (derived from `server_url` to `/preview-bridge` when unset).
+- `ws_subscribe_enabled` maps to optional plugin-side `subscribe` and `unsubscribe` signaling.
+- `debounce_ms` maps to typing update cadence for `TextChanged` and `TextChangedI` upserts.
+- `file_filter` and path normalization map to canonical `content/**/*.md` identity invariants.
+- `workspace_root` maps to workspace-relative path resolution before `filePath` emission.

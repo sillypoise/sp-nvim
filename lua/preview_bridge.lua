@@ -4,7 +4,13 @@ local preview_bridge = {}
 
 local default_config = {
   enabled = true,
+  transport = "http",
   server_url = "http://localhost:3000",
+  ws_url = nil,
+  ws_subscribe_enabled = true,
+  ws_ping_interval_ms = 15000,
+  ws_backoff_initial_ms = 250,
+  ws_backoff_max_ms = 2000,
   debounce_ms = 100,
   file_filter = "^content/.*%.md$",
   workspace_root = nil,
@@ -20,13 +26,36 @@ local state = {
   buffers = {},
   file_versions = {},
   curl_available = nil,
+  websocat_available = nil,
   warning_seen = {},
   warning_last_ns = 0,
+  ws = {
+    connected = false,
+    connecting = false,
+    process = nil,
+    stdin_pipe = nil,
+    stdout_pipe = nil,
+    stderr_pipe = nil,
+    reconnect_timer = nil,
+    ping_timer = nil,
+    stdout_buffer = "",
+    stderr_buffer = "",
+    reconnect_backoff_ms = nil,
+    reconnect_attempt_count = 0,
+    last_pong_ns = nil,
+    intentional_close = false,
+    active_file_path = nil,
+    subscribed_file_path = nil,
+  },
   debug = {
     last_warning = nil,
     last_skip_reason = nil,
     last_transport_error = nil,
     last_http_status = nil,
+    last_ws_error = nil,
+    last_ws_ack_event = nil,
+    last_ws_message = nil,
+    ws_state = "disconnected",
     last_upsert = nil,
     last_close = nil,
   },
@@ -145,6 +174,40 @@ local function ensure_curl_available()
   return state.curl_available
 end
 
+local function ensure_websocat_available()
+  if state.websocat_available ~= nil then
+    return state.websocat_available
+  end
+
+  state.websocat_available = vim.fn.executable("websocat") == 1
+
+  if state.websocat_available ~= true then
+    warn_throttled("websocat_missing", "PreviewBridge: websocat is required for WS transport.")
+  end
+
+  return state.websocat_available
+end
+
+local function ws_url()
+  if type(state.config.ws_url) == "string" and state.config.ws_url ~= "" then
+    return state.config.ws_url
+  end
+
+  return logic.derive_ws_url(state.config.server_url)
+end
+
+local function set_ws_state(ws_state)
+  state.debug.ws_state = ws_state
+end
+
+local function ws_subscription_enabled()
+  if state.config.transport ~= "ws" then
+    return false
+  end
+
+  return state.config.ws_subscribe_enabled ~= false
+end
+
 local function post_live_payload_async(payload)
   if ensure_curl_available() ~= true then
     state.debug.last_transport_error = "curl_missing"
@@ -206,6 +269,345 @@ local function post_live_payload_async(payload)
   return true
 end
 
+local function ws_close_pipe(pipe)
+  if pipe == nil then
+    return
+  end
+  if pipe:is_closing() ~= true then
+    pipe:close()
+  end
+end
+
+local function ws_send_json(message)
+  if state.ws.connected ~= true then
+    return false
+  end
+  if state.ws.stdin_pipe == nil then
+    return false
+  end
+
+  local encoded_message = vim.json.encode(message)
+  local payload = encoded_message .. "\n"
+  local write_ok, write_error = pcall(state.ws.stdin_pipe.write, state.ws.stdin_pipe, payload)
+  if write_ok ~= true then
+    state.debug.last_ws_error = tostring(write_error)
+    warn_throttled("ws_write_failed", "PreviewBridge: WS write failed (" .. tostring(write_error) .. ").")
+    return false
+  end
+
+  return true
+end
+
+local function ws_send_hello()
+  return ws_send_json({
+    type = "hello",
+    contract = "v1",
+    sessionId = state.session_id,
+  })
+end
+
+local function ws_send_ping()
+  return ws_send_json({ type = "ping" })
+end
+
+local function ws_send_subscribe(file_path)
+  return ws_send_json({
+    type = "subscribe",
+    filePath = file_path,
+  })
+end
+
+local function ws_send_unsubscribe(file_path)
+  return ws_send_json({
+    type = "unsubscribe",
+    filePath = file_path,
+  })
+end
+
+local function ws_sync_subscription()
+  if ws_subscription_enabled() ~= true then
+    return
+  end
+  if state.ws.connected ~= true then
+    return
+  end
+
+  local active_file_path = state.ws.active_file_path
+  local subscribed_file_path = state.ws.subscribed_file_path
+
+  if subscribed_file_path ~= nil and subscribed_file_path ~= active_file_path then
+    ws_send_unsubscribe(subscribed_file_path)
+    state.ws.subscribed_file_path = nil
+  end
+
+  if active_file_path ~= nil and state.ws.subscribed_file_path ~= active_file_path then
+    if ws_send_subscribe(active_file_path) == true then
+      state.ws.subscribed_file_path = active_file_path
+    end
+  end
+end
+
+local function ws_start_ping_timer()
+  if state.config.ws_ping_interval_ms < 1 then
+    return
+  end
+
+  if state.ws.ping_timer ~= nil then
+    state.ws.ping_timer:stop()
+    ws_close_pipe(state.ws.ping_timer)
+    state.ws.ping_timer = nil
+  end
+
+  state.ws.ping_timer = (vim.uv or vim.loop).new_timer()
+  state.ws.ping_timer:start(state.config.ws_ping_interval_ms, state.config.ws_ping_interval_ms, vim.schedule_wrap(function()
+    if state.ws.connected ~= true then
+      return
+    end
+
+    local pong_deadline_ns = state.config.ws_ping_interval_ms * 2 * 1000 * 1000
+    if state.ws.last_pong_ns ~= nil then
+      local pong_age_ns = now_ns() - state.ws.last_pong_ns
+      if pong_age_ns > pong_deadline_ns then
+        state.debug.last_ws_error = "pong_timeout"
+        warn_throttled("ws_pong_timeout", "PreviewBridge: WS pong timeout, reconnecting.")
+        if state.ws.process ~= nil and state.ws.process:is_closing() ~= true then
+          state.ws.process:kill("sigterm")
+        end
+        return
+      end
+    end
+
+    ws_send_ping()
+  end))
+end
+
+local function ws_schedule_reconnect()
+  if state.enabled ~= true then
+    return
+  end
+  if state.config.transport ~= "ws" then
+    return
+  end
+
+  local reconnect_backoff_ms = state.ws.reconnect_backoff_ms
+  if type(reconnect_backoff_ms) ~= "number" then
+    reconnect_backoff_ms = state.config.ws_backoff_initial_ms
+  end
+
+  local delay_ms, next_backoff_ms = logic.next_backoff_ms(
+    reconnect_backoff_ms,
+    state.config.ws_backoff_initial_ms,
+    state.config.ws_backoff_max_ms
+  )
+  state.ws.reconnect_backoff_ms = next_backoff_ms
+  state.ws.reconnect_attempt_count = state.ws.reconnect_attempt_count + 1
+
+  if state.ws.reconnect_timer ~= nil then
+    state.ws.reconnect_timer:stop()
+    ws_close_pipe(state.ws.reconnect_timer)
+    state.ws.reconnect_timer = nil
+  end
+
+  state.ws.reconnect_timer = (vim.uv or vim.loop).new_timer()
+  state.ws.reconnect_timer:start(delay_ms, 0, vim.schedule_wrap(function()
+    state.ws.reconnect_timer:stop()
+    ws_close_pipe(state.ws.reconnect_timer)
+    state.ws.reconnect_timer = nil
+    if state.enabled ~= true then
+      return
+    end
+    if state.config.transport ~= "ws" then
+      return
+    end
+    if state.ws.connecting == true then
+      return
+    end
+    if state.ws.connected == true then
+      return
+    end
+    -- Defer actual connect to avoid deep callback nesting.
+    preview_bridge.connect_ws()
+  end))
+end
+
+local function ws_handle_server_message(decoded_message)
+  if type(decoded_message) ~= "table" then
+    state.debug.last_ws_error = "invalid_message_shape"
+    return
+  end
+
+  local message_type = decoded_message.type
+  state.debug.last_ws_message = message_type
+
+  if message_type == "pong" then
+    state.ws.last_pong_ns = now_ns()
+    return
+  end
+
+  if message_type == "ack" then
+    state.debug.last_ws_ack_event = decoded_message.event
+    return
+  end
+
+  if message_type == "preview:error" then
+    local code = tostring(decoded_message.code)
+    local message = tostring(decoded_message.message)
+    state.debug.last_ws_error = code .. ":" .. message
+    warn_throttled("ws_preview_error", "PreviewBridge: WS error " .. code .. " - " .. message .. ".")
+  end
+end
+
+local function ws_read_stdout(_, chunk)
+  if chunk == nil then
+    return
+  end
+
+  state.ws.stdout_buffer = state.ws.stdout_buffer .. chunk
+
+  while true do
+    local newline_index = state.ws.stdout_buffer:find("\n", 1, true)
+    if newline_index == nil then
+      break
+    end
+
+    local line = state.ws.stdout_buffer:sub(1, newline_index - 1)
+    state.ws.stdout_buffer = state.ws.stdout_buffer:sub(newline_index + 1)
+
+    if line ~= "" then
+      local decode_ok, decoded_message = pcall(vim.json.decode, line)
+      if decode_ok ~= true then
+        state.debug.last_ws_error = "invalid_json"
+      else
+        ws_handle_server_message(decoded_message)
+      end
+    end
+  end
+end
+
+local function ws_read_stderr(_, chunk)
+  if chunk == nil then
+    return
+  end
+
+  state.ws.stderr_buffer = state.ws.stderr_buffer .. chunk
+  local newline_index = state.ws.stderr_buffer:find("\n", 1, true)
+  if newline_index ~= nil then
+    local line = state.ws.stderr_buffer:sub(1, newline_index - 1)
+    state.ws.stderr_buffer = state.ws.stderr_buffer:sub(newline_index + 1)
+    if line ~= "" then
+      state.debug.last_ws_error = line
+      warn_throttled("ws_stderr", "PreviewBridge WS: " .. line)
+    end
+  end
+end
+
+local function ws_disconnect(should_reconnect)
+  state.ws.intentional_close = should_reconnect ~= true
+  state.ws.connecting = false
+  state.ws.connected = false
+  set_ws_state("disconnected")
+
+  if state.ws.process ~= nil and state.ws.process:is_closing() ~= true then
+    state.ws.process:kill("sigterm")
+    state.ws.process:close()
+  end
+
+  ws_close_pipe(state.ws.stdin_pipe)
+  ws_close_pipe(state.ws.stdout_pipe)
+  ws_close_pipe(state.ws.stderr_pipe)
+
+  state.ws.process = nil
+  state.ws.stdin_pipe = nil
+  state.ws.stdout_pipe = nil
+  state.ws.stderr_pipe = nil
+  state.ws.subscribed_file_path = nil
+
+  if state.ws.ping_timer ~= nil then
+    state.ws.ping_timer:stop()
+    ws_close_pipe(state.ws.ping_timer)
+    state.ws.ping_timer = nil
+  end
+
+  if should_reconnect == true then
+    ws_schedule_reconnect()
+  end
+end
+
+function preview_bridge.connect_ws()
+  if state.config.transport ~= "ws" then
+    return false
+  end
+  if state.enabled ~= true then
+    return false
+  end
+  if state.ws.connected == true or state.ws.connecting == true then
+    return true
+  end
+  if ensure_websocat_available() ~= true then
+    state.debug.last_ws_error = "websocat_missing"
+    return false
+  end
+
+  local resolved_ws_url = ws_url()
+  if type(resolved_ws_url) ~= "string" then
+    state.debug.last_ws_error = "invalid_ws_url"
+    warn_throttled("ws_url_invalid", "PreviewBridge: invalid WS URL configuration.")
+    return false
+  end
+
+  state.ws.connecting = true
+  set_ws_state("connecting")
+
+  local stdin_pipe = (vim.uv or vim.loop).new_pipe(false)
+  local stdout_pipe = (vim.uv or vim.loop).new_pipe(false)
+  local stderr_pipe = (vim.uv or vim.loop).new_pipe(false)
+
+  local process_handle, spawn_error = (vim.uv or vim.loop).spawn("websocat", {
+    args = { "-t", resolved_ws_url },
+    stdio = { stdin_pipe, stdout_pipe, stderr_pipe },
+  }, vim.schedule_wrap(function(exit_code, _)
+    state.debug.last_ws_error = "ws_exit:" .. tostring(exit_code)
+    local should_reconnect = state.enabled == true and state.config.transport == "ws"
+    if state.ws.intentional_close == true then
+      should_reconnect = false
+    end
+    state.ws.intentional_close = false
+    ws_disconnect(should_reconnect)
+  end))
+
+  if process_handle == nil then
+    state.ws.connecting = false
+    set_ws_state("disconnected")
+    state.debug.last_ws_error = tostring(spawn_error)
+    warn_throttled("ws_spawn_failed", "PreviewBridge: WS spawn failed (" .. tostring(spawn_error) .. ").")
+    ws_close_pipe(stdin_pipe)
+    ws_close_pipe(stdout_pipe)
+    ws_close_pipe(stderr_pipe)
+    ws_schedule_reconnect()
+    return false
+  end
+
+  state.ws.process = process_handle
+  state.ws.stdin_pipe = stdin_pipe
+  state.ws.stdout_pipe = stdout_pipe
+  state.ws.stderr_pipe = stderr_pipe
+  state.ws.stdout_buffer = ""
+  state.ws.stderr_buffer = ""
+  state.ws.connected = true
+  state.ws.connecting = false
+  state.ws.reconnect_backoff_ms = state.config.ws_backoff_initial_ms
+  state.ws.last_pong_ns = now_ns()
+  set_ws_state("connected")
+
+  stdout_pipe:read_start(vim.schedule_wrap(ws_read_stdout))
+  stderr_pipe:read_start(vim.schedule_wrap(ws_read_stderr))
+
+  ws_send_hello()
+  ws_sync_subscription()
+  ws_start_ping_timer()
+  return true
+end
+
 local function resolve_buffer_path(buffer_number)
   local absolute_path = vim.api.nvim_buf_get_name(buffer_number)
   if absolute_path == "" then
@@ -263,6 +665,15 @@ local function is_eligible_buffer(buffer_number)
   return true, relative_path
 end
 
+local function ws_set_active_file(file_path)
+  if state.ws.active_file_path == file_path then
+    return
+  end
+
+  state.ws.active_file_path = file_path
+  ws_sync_subscription()
+end
+
 local function clear_buffer_debounce(buffer_state)
   logic.cancel_debounce(buffer_state)
 end
@@ -304,8 +715,13 @@ local function send_upsert(buffer_number)
 
   local is_eligible, relative_path = is_eligible_buffer(buffer_number)
   if is_eligible ~= true then
+    if buffer_number == vim.api.nvim_get_current_buf() then
+      ws_set_active_file(nil)
+    end
     return false
   end
+
+  ws_set_active_file(relative_path)
 
   local buffer_state = get_buffer_state(buffer_number, relative_path)
   local content = collect_buffer_content(buffer_number)
@@ -376,6 +792,10 @@ local function send_close(buffer_number)
       file_path = relative_path,
     }
   end
+  if state.ws.active_file_path == relative_path then
+    ws_set_active_file(nil)
+  end
+
   remove_buffer_state(buffer_number)
   return true
 end
@@ -387,8 +807,13 @@ local function schedule_upsert(buffer_number)
 
   local is_eligible, relative_path = is_eligible_buffer(buffer_number)
   if is_eligible ~= true then
+    if buffer_number == vim.api.nvim_get_current_buf() then
+      ws_set_active_file(nil)
+    end
     return
   end
+
+  ws_set_active_file(relative_path)
 
   local buffer_state = get_buffer_state(buffer_number, relative_path)
   logic.schedule_debounce(buffer_state, state.config.debounce_ms, function()
@@ -464,8 +889,13 @@ local function status_lines()
   local lines = {
     "PreviewBridge status:",
     "enabled=" .. tostring(state.enabled),
+    "transport=" .. tostring(state.config.transport),
     "session_id=" .. tostring(state.session_id),
     "workspace_root=" .. tostring(state.workspace_root),
+    "ws_state=" .. tostring(state.debug.ws_state),
+    "ws_url=" .. tostring(ws_url()),
+    "ws_subscribe_enabled=" .. tostring(ws_subscription_enabled()),
+    "ws_active_file=" .. tostring(state.ws.active_file_path),
     "tracked_buffers=" .. tostring(tracked_buffer_count()),
   }
 
@@ -483,11 +913,21 @@ local function status_lines()
 end
 
 local function debug_lines()
+  local pong_age_ms = nil
+  if state.ws.last_pong_ns ~= nil then
+    pong_age_ms = math.floor((now_ns() - state.ws.last_pong_ns) / (1000 * 1000))
+  end
+
   local lines = {
     "PreviewBridge debug:",
     "last_skip_reason=" .. tostring(state.debug.last_skip_reason),
     "last_transport_error=" .. tostring(state.debug.last_transport_error),
     "last_http_status=" .. tostring(state.debug.last_http_status),
+    "last_ws_error=" .. tostring(state.debug.last_ws_error),
+    "last_ws_ack_event=" .. tostring(state.debug.last_ws_ack_event),
+    "last_ws_message=" .. tostring(state.debug.last_ws_message),
+    "ws_reconnect_attempts=" .. tostring(state.ws.reconnect_attempt_count),
+    "last_pong_age_ms=" .. tostring(pong_age_ms),
     "last_warning=" .. tostring(state.debug.last_warning),
   }
 
@@ -523,6 +963,21 @@ local function setup_commands()
     vim.notify(table.concat(debug_lines(), "\n"), vim.log.levels.INFO)
   end, { desc = "Show preview bridge debug state" })
 
+  vim.api.nvim_create_user_command("PreviewBridgeReconnect", function()
+    ws_disconnect(false)
+    preview_bridge.connect_ws()
+  end, { desc = "Reconnect preview bridge websocket" })
+
+  vim.api.nvim_create_user_command("PreviewBridgeResubscribe", function()
+    if ws_subscription_enabled() ~= true then
+      vim.notify("PreviewBridge: websocket subscription is disabled.", vim.log.levels.INFO)
+      return
+    end
+
+    state.ws.subscribed_file_path = nil
+    ws_sync_subscription()
+  end, { desc = "Resubscribe current file on websocket" })
+
   vim.api.nvim_create_user_command("PreviewBridgePush", function()
     local buffer_number = vim.api.nvim_get_current_buf()
     send_upsert(buffer_number)
@@ -535,10 +990,14 @@ local function setup_commands()
 
   vim.api.nvim_create_user_command("PreviewBridgeEnable", function()
     state.enabled = true
+    if state.config.transport == "ws" then
+      preview_bridge.connect_ws()
+    end
   end, { desc = "Enable live markdown preview bridge" })
 
   vim.api.nvim_create_user_command("PreviewBridgeDisable", function()
     state.enabled = false
+    ws_disconnect(false)
     close_all_buffers()
   end, { desc = "Disable live markdown preview bridge" })
 end
@@ -548,6 +1007,18 @@ function preview_bridge.setup(user_config)
 
   if merged_config.debounce_ms < 1 then
     merged_config.debounce_ms = 1
+  end
+  if merged_config.ws_ping_interval_ms < 1000 then
+    merged_config.ws_ping_interval_ms = 1000
+  end
+  if merged_config.ws_backoff_initial_ms < 50 then
+    merged_config.ws_backoff_initial_ms = 50
+  end
+  if merged_config.ws_backoff_max_ms < merged_config.ws_backoff_initial_ms then
+    merged_config.ws_backoff_max_ms = merged_config.ws_backoff_initial_ms
+  end
+  if merged_config.transport ~= "ws" then
+    merged_config.transport = "http"
   end
 
   state.config = merged_config
@@ -565,6 +1036,13 @@ function preview_bridge.setup(user_config)
   end
 
   ensure_curl_available()
+
+  if state.enabled == true and state.config.transport == "ws" then
+    preview_bridge.connect_ws()
+  else
+    ws_disconnect(false)
+  end
+
   setup_autocmds()
 
   if state.initialized ~= true then
@@ -582,10 +1060,22 @@ function preview_bridge.close_current_buffer()
   return send_close(vim.api.nvim_get_current_buf())
 end
 
+function preview_bridge.reconnect_ws()
+  ws_disconnect(false)
+  return preview_bridge.connect_ws()
+end
+
+function preview_bridge.resubscribe_ws()
+  state.ws.subscribed_file_path = nil
+  ws_sync_subscription()
+end
+
 preview_bridge._state = state
 preview_bridge._logic = logic
 preview_bridge._test = {
   post_live_payload_async = post_live_payload_async,
+  ws_url = ws_url,
+  ws_subscription_enabled = ws_subscription_enabled,
 }
 
 return preview_bridge

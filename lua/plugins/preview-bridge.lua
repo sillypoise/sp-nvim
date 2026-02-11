@@ -6,7 +6,13 @@ return {
     lazy = false,
     opts = {
       enabled = true,
+      transport = "ws",
       server_url = "http://localhost:3000",
+      ws_url = nil,
+      ws_subscribe_enabled = true,
+      ws_ping_interval_ms = 15000,
+      ws_backoff_initial_ms = 250,
+      ws_backoff_max_ms = 2000,
       debounce_ms = 100,
       file_filter = "^content/.*%.md$",
       workspace_root = nil,

@@ -1,0 +1,230 @@
+# Preview Bridge Contract v1
+
+This document defines the integration contract between the Neovim bridge plugin and the preview app in `preview-app/`.
+
+## Scope
+
+- Local authoring workflow only (`localhost` trust model).
+- Unsaved Markdown buffer updates from Neovim must appear in browser preview.
+- Contract version is `v1` and must remain backward-compatible unless version is bumped.
+
+## Canonical File Identity
+
+- Client sends `filePath` as POSIX-style, workspace-relative path.
+- Allowed files are strict `content/**/*.md`.
+- Invalid examples: leading `/`, path traversal (`..`), non-markdown, non-content paths.
+- Monorepo/nested path normalization is allowed client-side as long as server receives `content/...`.
+
+## Session and Version Semantics
+
+- `sessionId` is process-lifetime (`nvim-<uuid>`), not persisted across restarts.
+- `version` is monotonic per `(sessionId, filePath)`.
+- Client increments version only when an upsert is actually sent.
+- Server rejects stale versions by returning `applied: false` and keeping current state.
+
+## Event Model (Neovim)
+
+- Initial snapshot upsert on `BufEnter`.
+- Debounced upsert on `TextChanged` and `TextChangedI` (target debounce ~100ms).
+- Immediate upsert on `BufWritePost` (client may skip if content hash unchanged).
+- Close action on `BufUnload`, `BufWipeout`, and `VimLeavePre` (best-effort, non-blocking).
+
+## Transport and Reliability
+
+- v1 transport is HTTP via async requests from plugin.
+- Bridge failures are non-fatal in editor; plugin retries naturally on subsequent edits.
+- No guaranteed queue/backoff persistence in v1.
+- WebSocket channel is available for browser realtime updates and future plugin transport migration.
+- Current rollout is hybrid: HTTP remains the write path of record; websocket is used for push/state subscription.
+
+## API Contract
+
+### Upsert Live Buffer
+
+- `POST /api/preview/live`
+- Body:
+
+```json
+{
+  "action": "upsert",
+  "sessionId": "nvim-...",
+  "filePath": "content/markdown.md",
+  "version": 12,
+  "content": "# Draft"
+}
+```
+
+- Success response (`200`):
+
+```json
+{
+  "ok": true,
+  "result": {
+    "applied": true,
+    "state": {
+      "sessionId": "nvim-...",
+      "filePath": "content/markdown.md",
+      "version": 12,
+      "content": "# Draft",
+      "updatedAt": "2026-02-09T00:00:00.000Z"
+    }
+  }
+}
+```
+
+### Close Live Buffer
+
+- `POST /api/preview/live`
+- Body:
+
+```json
+{
+  "action": "close",
+  "sessionId": "nvim-...",
+  "filePath": "content/markdown.md"
+}
+```
+
+- Success response (`200`):
+
+```json
+{
+  "ok": true,
+  "result": {
+    "removed": true
+  }
+}
+```
+
+### Debug Endpoints
+
+- `GET /api/preview/live`
+- `GET /api/preview/live?file=content/markdown.md`
+- `GET /api/preview/state?file=content/markdown.md`
+
+### WebSocket Endpoint
+
+- `ws://localhost:3000/preview-bridge` (or `wss` on HTTPS)
+- Client -> server messages:
+  - `{ "type": "hello" }`
+  - `{ "type": "subscribe", "filePath": "content/markdown.md" }`
+  - `{ "type": "unsubscribe", "filePath": "content/markdown.md" }`
+  - `{ "type": "ping" }`
+- Server -> client messages:
+  - `{ "type": "ack", "event": "hello|subscribe|unsubscribe", ... }`
+  - `{ "type": "preview:state", ... }`
+  - `{ "type": "preview:error", "code": "...", "message": "..." }`
+  - `{ "type": "pong" }`
+
+WebSocket notes:
+
+- Extra fields in client payloads are ignored in current implementation.
+- Subscription operations are idempotent for normal repeated calls.
+- Browser currently owns preview subscriptions; plugin websocket usage is optional while HTTP writes remain active.
+
+### Shared Envelope and Error Codes
+
+- Success shape: `{ ok: true, ... }`
+- Error shape: `{ ok: false, error: { code, message } }`
+- Contract header is required on API responses:
+  - `x-preview-bridge-contract: v1`
+- Current error codes:
+  - `INVALID_PAYLOAD`
+  - `INVALID_PATH`
+  - `PAYLOAD_TOO_LARGE`
+  - `NOT_FOUND`
+  - `INTERNAL_ERROR`
+
+### Current WebSocket `preview:error` codes
+
+- `INVALID_PAYLOAD`
+- `INVALID_STATE`
+- `SUBSCRIPTION_LIMIT`
+- `STATE_RESOLVE_FAILED`
+
+## Server-Side Limits and Lifecycle
+
+- Max upsert request payload size: `1_000_000` bytes.
+- Live entries are TTL-pruned:
+  - `LIVE_BUFFER_TTL_MS = 15 * 60 * 1000`
+- Preview state source priority is fixed:
+  1. `live`
+  2. `disk`
+
+## Observability
+
+- Server logs these events:
+  - `preview_live` (`upsert`, `close`, `clear`)
+  - `preview_state` (`resolve`, `error`)
+- Include key fields for triage:
+  - `sessionId`, `filePath`, `version`, `applied`, `source`, `code`
+
+## Compatibility Policy
+
+- This contract is the source of truth for v1 behavior.
+- Any breaking field/behavior change requires a version bump (for example `v2`).
+- Additive changes are allowed if existing fields and semantics remain stable.
+
+## v1.1 (Planned)
+
+The following are planned non-breaking clarifications for plugin websocket transport rollout:
+
+- `hello` may include contract and session metadata:
+  - `{ "type": "hello", "contract": "v1.1", "sessionId": "nvim-..." }`
+- `ack` may echo websocket contract version:
+  - `{ "type": "ack", "event": "hello", "contract": "v1.1" }`
+- Recommended reconnect bounds for plugin WS mode:
+  - backoff start `250ms`, cap `2000ms`, jitter enabled.
+- Heartbeat remains optional in v1.1:
+  - recommended ping interval `15s`, dead connection after 2 missed pongs.
+- Suggested standard websocket error codes:
+  - `INVALID_MESSAGE`
+  - `UNSUPPORTED_CONTRACT`
+  - `RATE_LIMITED`
+  - `INTERNAL_ERROR`
+
+## Verification Checklist
+
+- Start preview app on strict port:
+
+```bash
+cd preview-app
+bun run dev
+```
+
+- Upsert live content:
+
+```bash
+curl -X POST "http://localhost:3000/api/preview/live" \
+  -H "content-type: application/json" \
+  -d '{"action":"upsert","sessionId":"manual-1","filePath":"content/markdown.md","version":1,"content":"# Live"}'
+```
+
+- Verify effective state prefers live:
+
+```bash
+curl "http://localhost:3000/api/preview/state?file=content/markdown.md"
+```
+
+- Verify contract header exists on API responses:
+
+```bash
+curl -i "http://localhost:3000/api/preview/state?file=content/markdown.md" | grep x-preview-bridge-contract
+```
+
+- Verify payload guard:
+
+```bash
+python - <<'PY'
+import requests
+payload = {
+  "action": "upsert",
+  "sessionId": "manual-1",
+  "filePath": "content/markdown.md",
+  "version": 2,
+  "content": "x" * 1100000,
+}
+r = requests.post("http://localhost:3000/api/preview/live", json=payload)
+print(r.status_code, r.text)
+PY
+```

@@ -166,6 +166,57 @@ function logic.parse_curl_response(stdout)
   return status_code, response_body
 end
 
+function logic.derive_ws_url(server_url)
+  if type(server_url) ~= "string" then
+    return nil
+  end
+
+  local https_prefix = "https://"
+  local http_prefix = "http://"
+
+  local normalized_server_url = server_url:gsub("/+$", "")
+
+  if normalized_server_url:sub(1, #https_prefix) == https_prefix then
+    return "wss://" .. normalized_server_url:sub(#https_prefix + 1) .. "/preview-bridge"
+  end
+
+  if normalized_server_url:sub(1, #http_prefix) == http_prefix then
+    return "ws://" .. normalized_server_url:sub(#http_prefix + 1) .. "/preview-bridge"
+  end
+
+  if normalized_server_url:sub(1, 5) == "ws://" or normalized_server_url:sub(1, 6) == "wss://" then
+    return normalized_server_url
+  end
+
+  return nil
+end
+
+function logic.next_backoff_ms(current_backoff_ms, initial_backoff_ms, max_backoff_ms)
+  local base_backoff_ms = current_backoff_ms
+  if type(base_backoff_ms) ~= "number" then
+    base_backoff_ms = initial_backoff_ms
+  end
+
+  local jitter_floor = 0.8
+  local jitter_ceiling = 1.2
+  local jitter_multiplier = jitter_floor + (math.random() * (jitter_ceiling - jitter_floor))
+  local next_backoff_ms = math.floor(base_backoff_ms * jitter_multiplier)
+
+  if next_backoff_ms < initial_backoff_ms then
+    next_backoff_ms = initial_backoff_ms
+  end
+  if next_backoff_ms > max_backoff_ms then
+    next_backoff_ms = max_backoff_ms
+  end
+
+  local doubled_backoff_ms = base_backoff_ms * 2
+  if doubled_backoff_ms > max_backoff_ms then
+    doubled_backoff_ms = max_backoff_ms
+  end
+
+  return next_backoff_ms, doubled_backoff_ms
+end
+
 function logic.schedule_debounce(buffer_state, debounce_ms, timer_factory, schedule_wrap, callback)
   if buffer_state.debounce_timer == nil then
     buffer_state.debounce_timer = timer_factory()

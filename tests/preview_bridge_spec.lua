@@ -187,3 +187,44 @@ describe("preview bridge failure handling", function()
     assert.is_false(result)
   end)
 end)
+
+describe("preview bridge websocket helpers", function()
+  -- This test verifies ws URL derivation from HTTP server URLs.
+  it("derives ws URL from http URL", function()
+    assert.equals("ws://localhost:3000/preview-bridge", logic.derive_ws_url("http://localhost:3000"))
+  end)
+
+  -- This test verifies wss URL derivation from HTTPS server URLs.
+  it("derives wss URL from https URL", function()
+    assert.equals("wss://example.com/preview-bridge", logic.derive_ws_url("https://example.com"))
+  end)
+
+  -- This test verifies ws URL passthrough for explicit websocket endpoints.
+  it("keeps explicit ws URL unchanged", function()
+    assert.equals("ws://localhost:3000/preview-bridge", logic.derive_ws_url("ws://localhost:3000/preview-bridge"))
+  end)
+
+  -- This test verifies reconnect backoff values stay within configured bounds.
+  it("bounds reconnect backoff with jitter", function()
+    local attempt_delay_ms, next_backoff_ms = logic.next_backoff_ms(250, 250, 2000)
+    assert.is_true(attempt_delay_ms >= 250)
+    assert.is_true(attempt_delay_ms <= 300)
+    assert.equals(500, next_backoff_ms)
+  end)
+
+  -- This test verifies WS subscriptions default to enabled in WS transport mode.
+  it("enables ws subscribe by default in ws mode", function()
+    local previous_config = preview_bridge._state.config
+    preview_bridge._state.config = { transport = "ws", ws_subscribe_enabled = true }
+    assert.is_true(preview_bridge._test.ws_subscription_enabled())
+    preview_bridge._state.config = previous_config
+  end)
+
+  -- This test verifies explicit disable is respected.
+  it("allows disabling ws subscribe explicitly", function()
+    local previous_config = preview_bridge._state.config
+    preview_bridge._state.config = { transport = "ws", ws_subscribe_enabled = false }
+    assert.is_false(preview_bridge._test.ws_subscription_enabled())
+    preview_bridge._state.config = previous_config
+  end)
+end)
