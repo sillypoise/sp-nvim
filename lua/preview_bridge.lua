@@ -8,6 +8,8 @@ local default_config = {
   server_url = "http://localhost:3000",
   ws_url = nil,
   ws_subscribe_enabled = true,
+  ws_write_enabled = true,
+  ws_write_http_fallback = true,
   ws_ping_interval_ms = 15000,
   ws_backoff_initial_ms = 250,
   ws_backoff_max_ms = 2000,
@@ -54,6 +56,9 @@ local state = {
     last_http_status = nil,
     last_ws_error = nil,
     last_ws_ack_event = nil,
+    last_ws_ack_applied = nil,
+    last_ws_ack_version = nil,
+    last_ws_ack_removed = nil,
     last_ws_message = nil,
     ws_state = "disconnected",
     last_upsert = nil,
@@ -208,6 +213,14 @@ local function ws_subscription_enabled()
   return state.config.ws_subscribe_enabled ~= false
 end
 
+local function ws_write_enabled()
+  if state.config.transport ~= "ws" then
+    return false
+  end
+
+  return state.config.ws_write_enabled ~= false
+end
+
 local function post_live_payload_async(payload)
   if ensure_curl_available() ~= true then
     state.debug.last_transport_error = "curl_missing"
@@ -320,6 +333,24 @@ end
 local function ws_send_unsubscribe(file_path)
   return ws_send_json({
     type = "unsubscribe",
+    filePath = file_path,
+  })
+end
+
+local function ws_send_upsert(session_id, file_path, version, content)
+  return ws_send_json({
+    type = "upsert",
+    sessionId = session_id,
+    filePath = file_path,
+    version = version,
+    content = content,
+  })
+end
+
+local function ws_send_close(session_id, file_path)
+  return ws_send_json({
+    type = "close",
+    sessionId = session_id,
     filePath = file_path,
   })
 end
@@ -446,6 +477,9 @@ local function ws_handle_server_message(decoded_message)
 
   if message_type == "ack" then
     state.debug.last_ws_ack_event = decoded_message.event
+    state.debug.last_ws_ack_applied = decoded_message.applied
+    state.debug.last_ws_ack_version = decoded_message.version
+    state.debug.last_ws_ack_removed = decoded_message.removed
     return
   end
 
@@ -738,12 +772,23 @@ local function send_upsert(buffer_number)
   end
 
   local version = (state.file_versions[relative_path] or 0) + 1
-  local payload = logic.build_upsert_payload(state.session_id, relative_path, version, content)
+  local upsert_sent = false
 
-  local started = post_live_payload_async(payload)
-  if started ~= true then
-    state.debug.last_skip_reason = "request_not_started"
-    return false
+  if ws_write_enabled() == true then
+    upsert_sent = ws_send_upsert(state.session_id, relative_path, version, content)
+    if upsert_sent ~= true and state.config.ws_write_http_fallback ~= true then
+      state.debug.last_skip_reason = "ws_write_not_started"
+      return false
+    end
+  end
+
+  if upsert_sent ~= true then
+    local payload = logic.build_upsert_payload(state.session_id, relative_path, version, content)
+    upsert_sent = post_live_payload_async(payload)
+    if upsert_sent ~= true then
+      state.debug.last_skip_reason = "request_not_started"
+      return false
+    end
   end
 
   state.file_versions[relative_path] = version
@@ -786,7 +831,19 @@ local function send_close(buffer_number)
   end
 
   local payload = logic.build_close_payload(state.session_id, relative_path)
-  local started = post_live_payload_async(payload)
+  local started = false
+
+  if ws_write_enabled() == true then
+    started = ws_send_close(state.session_id, relative_path)
+    if started ~= true and state.config.ws_write_http_fallback ~= true then
+      state.debug.last_skip_reason = "ws_close_not_started"
+    end
+  end
+
+  if started ~= true then
+    started = post_live_payload_async(payload)
+  end
+
   if started == true then
     state.debug.last_close = {
       file_path = relative_path,
@@ -895,6 +952,8 @@ local function status_lines()
     "ws_state=" .. tostring(state.debug.ws_state),
     "ws_url=" .. tostring(ws_url()),
     "ws_subscribe_enabled=" .. tostring(ws_subscription_enabled()),
+    "ws_write_enabled=" .. tostring(ws_write_enabled()),
+    "ws_write_http_fallback=" .. tostring(state.config.ws_write_http_fallback),
     "ws_active_file=" .. tostring(state.ws.active_file_path),
     "tracked_buffers=" .. tostring(tracked_buffer_count()),
   }
@@ -925,6 +984,9 @@ local function debug_lines()
     "last_http_status=" .. tostring(state.debug.last_http_status),
     "last_ws_error=" .. tostring(state.debug.last_ws_error),
     "last_ws_ack_event=" .. tostring(state.debug.last_ws_ack_event),
+    "last_ws_ack_applied=" .. tostring(state.debug.last_ws_ack_applied),
+    "last_ws_ack_version=" .. tostring(state.debug.last_ws_ack_version),
+    "last_ws_ack_removed=" .. tostring(state.debug.last_ws_ack_removed),
     "last_ws_message=" .. tostring(state.debug.last_ws_message),
     "ws_reconnect_attempts=" .. tostring(state.ws.reconnect_attempt_count),
     "last_pong_age_ms=" .. tostring(pong_age_ms),
@@ -1076,6 +1138,7 @@ preview_bridge._test = {
   post_live_payload_async = post_live_payload_async,
   ws_url = ws_url,
   ws_subscription_enabled = ws_subscription_enabled,
+  ws_write_enabled = ws_write_enabled,
 }
 
 return preview_bridge

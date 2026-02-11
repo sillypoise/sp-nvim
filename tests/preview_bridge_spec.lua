@@ -227,4 +227,20 @@ describe("preview bridge websocket helpers", function()
     assert.is_false(preview_bridge._test.ws_subscription_enabled())
     preview_bridge._state.config = previous_config
   end)
+
+  -- This test verifies WS write path is enabled by default in WS mode.
+  it("enables ws writes by default in ws mode", function()
+    local previous_config = preview_bridge._state.config
+    preview_bridge._state.config = { transport = "ws", ws_write_enabled = true }
+    assert.is_true(preview_bridge._test.ws_write_enabled())
+    preview_bridge._state.config = previous_config
+  end)
+
+  -- This test verifies explicit disable forces non-WS write path.
+  it("allows disabling ws writes explicitly", function()
+    local previous_config = preview_bridge._state.config
+    preview_bridge._state.config = { transport = "ws", ws_write_enabled = false }
+    assert.is_false(preview_bridge._test.ws_write_enabled())
+    preview_bridge._state.config = previous_config
+  end)
 end)

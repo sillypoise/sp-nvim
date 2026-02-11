@@ -38,18 +38,23 @@ Contract source of truth in this repo: `preview_bridge_contract_v1.md`.
 ### WebSocket transport (v1)
 
 - Set `transport = "ws"` to enable websocket connection awareness.
-- HTTP remains the write path for `upsert` and `close` in v1 hybrid mode.
+- WS write path is primary for `upsert` and `close` in WS mode.
+- HTTP fallback remains available for resilience when WS writes fail.
 - `websocat` must be installed and available on `PATH` for WS mode.
 - Browser owns preview subscriptions by default; plugin WS subscription signaling is optional.
 - Plugin WS subscription signaling is enabled by default in WS mode.
 - Set `ws_subscribe_enabled = false` to disable plugin subscribe/unsubscribe signaling.
+- Set `ws_write_enabled = false` to force HTTP writes even in WS transport mode.
+- Set `ws_write_http_fallback = false` to disable HTTP fallback for failed WS writes.
 
 ### Contract mapping
 
-- `transport` maps to contract transport mode (`http` canonical writes, `ws` hybrid lifecycle).
+- `transport` maps to contract transport mode (`http` canonical writes, `ws` websocket lifecycle).
 - `server_url` maps to HTTP endpoints under `/api/preview/live`, `/api/preview/state`, and `/api/preview/live`.
 - `ws_url` maps to websocket endpoint (derived from `server_url` to `/preview-bridge` when unset).
 - `ws_subscribe_enabled` maps to optional plugin-side `subscribe` and `unsubscribe` signaling.
+- `ws_write_enabled` maps to websocket `upsert` and `close` writes in WS mode.
+- `ws_write_http_fallback` maps to optional HTTP fallback when WS write dispatch fails.
 - `debounce_ms` maps to typing update cadence for `TextChanged` and `TextChangedI` upserts.
 - `file_filter` and path normalization map to canonical `content/**/*.md` identity invariants.
 - `workspace_root` maps to workspace-relative path resolution before `filePath` emission.
