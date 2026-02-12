@@ -5,7 +5,7 @@ return {
     dir = vim.fn.stdpath("config"),
     lazy = false,
     opts = {
-      enabled = true,
+      enabled = false,
       transport = "ws",
       server_url = "http://localhost:3000",
       ws_url = nil,

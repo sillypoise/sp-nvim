@@ -25,6 +25,7 @@ return {
       ["astro"] = { "astro" },
       ["css"] = { "oxfmt" },
       ["graphql"] = { "oxfmt" },
+      ["go"] = { "goimports", "gofumpt" },
       ["handlebars"] = { "oxfmt" },
       ["hbs"] = { "oxfmt" },
       ["html"] = { "oxfmt" },
