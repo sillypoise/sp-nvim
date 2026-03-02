@@ -32,3 +32,14 @@ vim.keymap.set("n", "<leader>yf", copy_file_path, { desc = "Copy file path to cl
 vim.keymap.set("n", "<leader>cp", function()
   require("preview_bridge").open_current_buffer()
 end, { desc = "Open Markdown Preview" })
+
+vim.keymap.set("n", "<leader>uM", function()
+  local preview_bridge = require("preview_bridge")
+  if preview_bridge._state.enabled then
+    vim.cmd("PreviewBridgeDisable")
+    vim.notify("PreviewBridge: disabled", vim.log.levels.INFO)
+  else
+    vim.cmd("PreviewBridgeEnable")
+    vim.notify("PreviewBridge: enabled", vim.log.levels.INFO)
+  end
+end, { desc = "Toggle Preview Bridge" })
