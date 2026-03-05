@@ -1,0 +1,74 @@
+{
+  "Markdoc callout": {
+    "prefix": "mcallout",
+    "body": [
+      "{% callout type=\"${1|note,warning,success,danger|}\" title=\"${2:Title}\" %}",
+      "${0:Callout content}",
+      "{% /callout %}"
+    ],
+    "description": "Markdoc callout block"
+  },
+  "Markdoc callout note": {
+    "prefix": "mnote",
+    "body": [
+      "{% callout type=\"note\" title=\"${1:Note}\" %}",
+      "${0:Callout content}",
+      "{% /callout %}"
+    ],
+    "description": "Markdoc note callout"
+  },
+  "Markdoc callout warning": {
+    "prefix": "mwarning",
+    "body": [
+      "{% callout type=\"warning\" title=\"${1:Warning}\" %}",
+      "${0:Callout content}",
+      "{% /callout %}"
+    ],
+    "description": "Markdoc warning callout"
+  },
+  "Markdoc callout success": {
+    "prefix": "msuccess",
+    "body": [
+      "{% callout type=\"success\" title=\"${1:Success}\" %}",
+      "${0:Callout content}",
+      "{% /callout %}"
+    ],
+    "description": "Markdoc success callout"
+  },
+  "Markdoc callout danger": {
+    "prefix": "mdanger",
+    "body": [
+      "{% callout type=\"danger\" title=\"${1:Danger}\" %}",
+      "${0:Callout content}",
+      "{% /callout %}"
+    ],
+    "description": "Markdoc danger callout"
+  },
+  "Markdoc codefence": {
+    "prefix": "mcodefence",
+    "body": [
+      "{% codefence language=\"${1:text}\" title=\"${2:Example}\" %}",
+      "${0:// code}",
+      "{% /codefence %}"
+    ],
+    "description": "Markdoc codefence block"
+  },
+  "Markdoc figure image": {
+    "prefix": "mfigureimg",
+    "body": [
+      "{% figure kind=\"image\" src=\"${1:/images/example.png}\" alt=\"${2:Descriptive alt text}\" title=\"${3:Figure title}\" credit=\"${4:Credit}\" %}",
+      "${0:Optional markdown caption}",
+      "{% /figure %}"
+    ],
+    "description": "Markdoc figure tag for image"
+  },
+  "Markdoc figure video": {
+    "prefix": "mfigurevid",
+    "body": [
+      "{% figure kind=\"video\" src=\"${1:/videos/example.mp4}\" poster=\"${2:/images/poster.png}\" title=\"${3:Figure title}\" credit=\"${4:Credit}\" %}",
+      "${0:Optional markdown caption}",
+      "{% /figure %}"
+    ],
+    "description": "Markdoc figure tag for video"
+  }
+}
