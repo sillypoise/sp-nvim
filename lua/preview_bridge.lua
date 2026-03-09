@@ -919,6 +919,13 @@ local function resolve_buffer_path(buffer_number)
     return nil
   end
 
+  if type(state.workspace_root) == "string" then
+    local configured_relative_path = logic.normalize_relative_path(absolute_path, state.workspace_root)
+    if type(configured_relative_path) == "string" and configured_relative_path ~= "" then
+      return configured_relative_path
+    end
+  end
+
   local workspace_roots = {}
   local nearest_git_root = find_nearest_git_root(absolute_path)
 
@@ -933,10 +940,8 @@ local function resolve_buffer_path(buffer_number)
   end
 
   local relative_path = logic.normalize_relative_path_from_roots(absolute_path, workspace_roots)
-  if type(relative_path) == "string" then
-    if relative_path:sub(1, 8) == "content/" then
-      return relative_path
-    end
+  if type(relative_path) == "string" and relative_path ~= "" then
+    return relative_path
   end
 
   return logic.normalize_content_relative_path(absolute_path)
@@ -954,13 +959,17 @@ local function is_eligible_buffer(buffer_number)
   if is_eligible ~= true then
     state.debug.last_skip_reason = "path_ineligible:" .. relative_path
     if relative_path:sub(-3) == ".md" then
+      local filter_hint = type(state.config.file_filter) == "string" and state.config.file_filter
+        or "<custom function>"
       warn_throttled(
         "path_rejected",
         "PreviewBridge: skipped ineligible path '"
           .. relative_path
           .. "' from "
           .. absolute_path
-          .. ". Expected content/*.md relative to nearest Git root or /content/ path segment."
+          .. ". Path must be workspace-relative, end with .md, and match file_filter ("
+          .. filter_hint
+          .. ")."
       )
     end
     return false, relative_path
@@ -1450,7 +1459,7 @@ function preview_bridge.open_current_buffer()
   local is_eligible, relative_path = is_eligible_buffer(buffer_number)
   if is_eligible ~= true then
     state.debug.last_open_error = "open_path_ineligible"
-    vim.notify("PreviewBridge: current buffer is not an eligible content/*.md file.", vim.log.levels.WARN)
+    vim.notify("PreviewBridge: current buffer is not eligible for the configured file_filter.", vim.log.levels.WARN)
     return false
   end
 

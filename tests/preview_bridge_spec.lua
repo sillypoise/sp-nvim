@@ -76,6 +76,16 @@ describe("preview bridge eligibility", function()
     assert.is_true(logic.is_eligible_path("content/allowed.md", 1, file_filter))
     assert.is_false(logic.is_eligible_path("content/denied.md", 1, file_filter))
   end)
+
+  -- This test verifies custom path prefixes can be allowed via file_filter.
+  it("accepts non-content paths when file_filter allows them", function()
+    assert.is_true(logic.is_eligible_path("sagamd/notes/ideas.md", 1, "^sagamd/notes/.*%.md$"))
+  end)
+
+  -- This test verifies current-directory traversal segments are rejected.
+  it("rejects current-directory traversal segments", function()
+    assert.is_false(logic.is_eligible_path("sagamd/./notes.md", 1, "^sagamd/notes/.*%.md$"))
+  end)
 end)
 
 describe("preview bridge versioning", function()

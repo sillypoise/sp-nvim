@@ -78,15 +78,12 @@ function logic.is_valid_preview_path(relative_path)
   if relative_path:find("\\", 1, true) ~= nil then
     return false
   end
-  if relative_path:sub(1, 8) ~= "content/" then
-    return false
-  end
   if relative_path:sub(-3) ~= ".md" then
     return false
   end
 
   for segment in relative_path:gmatch("[^/]+") do
-    if segment == ".." then
+    if segment == ".." or segment == "." then
       return false
     end
   end

@@ -30,7 +30,7 @@ Contract source of truth in this repo: `preview_bridge_contract_v1.md`.
 
 - If the browser updates only on save and live endpoint returns `item: null`, run
   `:PreviewBridgeStatus` and `:PreviewBridgeDebug`.
-- If `tracked_buffers=0`, verify the file resolves to `content/*.md` after normalization.
+- If `tracked_buffers=0`, verify the file resolves to a workspace-relative `.md` path that matches your configured `file_filter`.
 - If `last_transport_error` is set, verify `curl` is available and the preview app is running on
   `server_url`.
 - For monorepos or unusual workspace layouts, set `workspace_root` in
@@ -64,7 +64,7 @@ Contract source of truth in this repo: `preview_bridge_contract_v1.md`.
   should include `%URL%` placeholder.
 - `max_payload_bytes` maps to client-side payload guard before WS/HTTP write dispatch.
 - `debounce_ms` maps to typing update cadence for `TextChanged` and `TextChangedI` upserts.
-- `file_filter` and path normalization map to canonical `content/**/*.md` identity invariants.
+- `file_filter` and path normalization map to your server's allowed markdown path policy (for example `content/**/*.md` or `sagamd/notes/**/*.md`).
 - `workspace_root` maps to workspace-relative path resolution before `filePath` emission.
 
 `PreviewBridgeStatus` and `PreviewBridgeDebug` include write counters (`ws_writes_sent`,

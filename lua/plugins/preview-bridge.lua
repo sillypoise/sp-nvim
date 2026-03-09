@@ -7,12 +7,13 @@ return {
     opts = {
       enabled = false,
       transport = "ws",
-      server_url = "http://localhost:3000",
+      -- sagamd container
+      server_url = "http://sp-dev:3101",
+      browser_base_url = "http://sp-dev:3101",
       ws_url = nil,
       ws_subscribe_enabled = false,
       ws_write_enabled = true,
       ws_write_http_fallback = true,
-      browser_base_url = "http://localhost:3000",
       open_fallback_mode = "notify_copy",
       open_custom_command = nil,
       max_payload_bytes = 1000000,
@@ -20,8 +21,9 @@ return {
       ws_backoff_initial_ms = 250,
       ws_backoff_max_ms = 2000,
       debounce_ms = 100,
-      file_filter = "^content/.*%.md$",
-      workspace_root = nil,
+      -- IMPORTANT: must align with PREVIEW_ALLOWED_PREFIX=/sagamd/notes/
+      file_filter = "^sagamd/notes/.*%.md$",
+      workspace_root = vim.fn.expand("~/personal"),
     },
     config = function(_, opts)
       require("preview_bridge").setup(opts)
