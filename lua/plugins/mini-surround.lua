@@ -41,6 +41,13 @@ return {
           return { left = "**", right = "**" }
         end,
       },
+      -- Anki cloze surrounding
+      ["c"] = {
+        input = { "{{c%d+::.-}}", "^{{c%d+::", "}}$" },
+        output = function()
+          return { left = "{{c1::", right = "}}" }
+        end,
+      },
     },
     mappings = {
       add = "<leader>cwa", -- Add surrounding in Normal and Visual modes
