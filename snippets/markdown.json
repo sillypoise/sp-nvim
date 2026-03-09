@@ -70,5 +70,23 @@
       "{% /figure %}"
     ],
     "description": "Markdoc figure tag for video"
+  },
+  "Anki sidecar card": {
+    "prefix": "ankicard",
+    "body": [
+      "@@@",
+      "",
+      "md:",
+      "",
+      "${1}",
+      "",
+      "context:",
+      "",
+      "${2}",
+      "",
+      "@@@",
+      "$0"
+    ],
+    "description": "Anki sidecar card block"
   }
 }
