@@ -74,7 +74,7 @@
   "Anki sidecar card": {
     "prefix": "ankicard",
     "body": [
-      "@@@",
+      "{% ankicard %}",
       "",
       "md:",
       "",
@@ -84,7 +84,7 @@
       "",
       "${2}",
       "",
-      "@@@",
+      "{% /ankicard %}",
       "$0"
     ],
     "description": "Anki sidecar card block"
