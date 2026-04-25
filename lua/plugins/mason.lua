@@ -23,6 +23,7 @@ return {
       "nil",
       "oxfmt",
       "oxlint",
+      "ruff",
       "stylua",
       "tinymist",
       "tsgo",

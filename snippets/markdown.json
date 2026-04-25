@@ -47,8 +47,10 @@
   "Markdoc codefence": {
     "prefix": "mcodefence",
     "body": [
-      "{% codefence language=\"${1:text}\" title=\"${2:Example}\" %}",
-      "${0:// code}",
+      "{% codefence language=\"${2:text}\" title=\"${3:Example}\" %}",
+      "```${1:text}",
+      "${0}",
+      "```",
       "{% /codefence %}"
     ],
     "description": "Markdoc codefence block"
@@ -88,5 +90,40 @@
       "$0"
     ],
     "description": "Anki sidecar card block"
+  },
+  "Markdoc math inline": {
+    "prefix": "mmath",
+    "body": [
+      "{% math %}${1:\\alpha}{% /math %}$0"
+    ],
+    "description": "Markdoc inline math tag"
+  },
+  "Markdoc math block": {
+    "prefix": "mmathblock",
+    "body": [
+      "{% mathblock %}",
+      "${1:\\text{expression}}",
+      "{% /mathblock %}",
+      "$0"
+    ],
+    "description": "Markdoc block math tag"
+  },
+  "Markdoc title placeholder": {
+    "prefix": "mtitle",
+    "body": [
+      "{% title /%}$0"
+    ],
+    "description": "Markdoc title placeholder tag"
+  },
+  "Markdoc mermaid": {
+    "prefix": "mmermaid",
+    "body": [
+      "{% mermaid %}",
+      "${1:graph TD}",
+      "${2:A[Start] --> B[End]}",
+      "{% /mermaid %}",
+      "$0"
+    ],
+    "description": "Markdoc mermaid diagram tag"
   }
 }

@@ -39,6 +39,7 @@ return {
       ["markdown"] = { "oxfmt", "markdownlint-cli2", "markdown-toc" },
       ["mdx"] = { "oxfmt", "markdownlint-cli2", "markdown-toc" },
       ["markdown.mdx"] = { "oxfmt", "markdownlint-cli2", "markdown-toc" },
+      ["python"] = { "ruff_format" },
       ["scss"] = { "oxfmt" },
       ["toml"] = { "oxfmt" },
       ["typescript"] = { "oxlint", "oxfmt" },
