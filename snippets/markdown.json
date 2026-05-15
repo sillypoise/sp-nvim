@@ -125,5 +125,16 @@
       "$0"
     ],
     "description": "Markdoc mermaid diagram tag"
+  },
+  "Markdoc seed": {
+    "prefix": "mseed",
+    "body": [
+      "{% seed %}",
+      "",
+      "${0:content}",
+      "",
+      "{% /seed %}"
+    ],
+    "description": "Markdoc seed block"
   }
 }
