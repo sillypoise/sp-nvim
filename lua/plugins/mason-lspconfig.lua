@@ -5,7 +5,7 @@ return {
       "clangd",
       "gopls",
       "oxlint",
-      "tsgo",
+      -- "tsgo",
       -- "vtsls",
     },
   },
