@@ -23,6 +23,8 @@ return {
     },
     formatters_by_ft = {
       ["astro"] = { "astro" },
+      ["c"] = { "clang-format" },
+      ["cpp"] = { "clang-format" },
       ["css"] = { "oxfmt" },
       ["graphql"] = { "oxfmt" },
       ["go"] = { "goimports", "gofumpt" },

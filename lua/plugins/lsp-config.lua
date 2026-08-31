@@ -46,6 +46,8 @@ return {
         cmd = { vim.fn.stdpath("data") .. "/mason/bin/tsgo", "--lsp", "--stdio" },
       },
       vtsls = { enabled = false },
+      -- Keep ZLS on the same Nix release line as the Zig compiler.
+      zls = { mason = false },
       tinymist = {
         keys = {
           {

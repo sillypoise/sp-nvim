@@ -3,6 +3,8 @@ return {
   opts = {
     ensure_installed = {
       "astro-language-server",
+      -- clangd is managed by mason-lspconfig.nvim; clang-format is a standalone formatter.
+      "clang-format",
       -- "biome",
       -- "emmet-language-server",
       -- "eslint_d",
