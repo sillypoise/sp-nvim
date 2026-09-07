@@ -37,6 +37,7 @@ return {
       ["json"] = { "oxfmt" },
       ["jsonc"] = { "oxfmt" },
       ["json5"] = { "oxfmt" },
+      ["just"] = { "just" },
       ["less"] = { "oxfmt" },
       ["markdown"] = { "oxfmt", "markdownlint-cli2", "markdown-toc" },
       ["mdx"] = { "oxfmt", "markdownlint-cli2", "markdown-toc" },

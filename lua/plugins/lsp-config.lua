@@ -39,6 +39,7 @@ return {
           },
         },
       },
+      just = {},
       oxlint = {
         cmd = { vim.fn.stdpath("data") .. "/mason/bin/oxlint", "--lsp" },
       },

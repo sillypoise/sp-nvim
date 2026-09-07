@@ -4,6 +4,7 @@ return {
     ensure_installed = {
       "clangd",
       "gopls",
+      "just",
       "oxlint",
       -- "tsgo",
       -- "vtsls",
